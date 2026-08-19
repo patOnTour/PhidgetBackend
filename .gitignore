@@ -1,0 +1,14 @@
+.env
+__pycache__/
+*.py[cod]
+phidget-dashboard/config/config.json
+phidget-dashboard/archive/
+timescale_data/
+grafana_data/
+ntfy_cache/
+*.csv
+*.png
+*.logimport_logs/
+api/import_logs/
+*.log.*
+*.log

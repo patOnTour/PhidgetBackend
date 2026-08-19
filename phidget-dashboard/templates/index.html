@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Concretum Setting Control</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background-color: #0b1120; color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; }
+    .badge-RUNNING { background-color: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); }
+    .badge-TRIGGERED { background-color: rgba(239, 68, 68, 0.25); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.5); animation: pulse 2s infinite; }
+    .badge-RESET { background-color: rgba(148, 163, 184, 0.1); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.2); }
+    .badge-EXPORT { background-color: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); }
+    
+    /* Scrollbereich exakt auf 3 Zeilen optimiert */
+    .scroll-3-lines {
+      max-height: 140px;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+  </style>
+</head>
+<body class="p-3 sm:p-6 max-w-4xl mx-auto pb-24">
+
+  <!-- Header -->
+  <header class="mb-5 flex justify-between items-center border-b border-slate-800 pb-3">
+    <div>
+      <h1 class="text-xl font-bold tracking-tight text-white">CONCRETUM</h1>
+      <p class="text-xs text-slate-400 font-mono">Setting Telemetry & Control System</p>
+    </div>
+    <span class="px-2.5 py-1 rounded text-xs font-medium bg-slate-800 text-slate-300 border border-slate-700 font-mono">
+      Sync: 20s
+    </span>
+  </header>
+
+  <!-- Trigger-Events: Max 3 Zeilen sichtbar, danach scrollbar -->
+  <section class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-lg mb-6">
+    <h2 class="text-xs font-semibold uppercase tracking-wider text-rose-400 mb-2 flex items-center gap-1.5 font-mono">
+      <span>🔥</span> Letzte Beton-Alarme
+    </h2>
+    <div class="scroll-3-lines pr-1">
+      <table class="w-full text-left text-xs">
+        <tbody id="trigger-table-body" class="divide-y divide-slate-800/60 font-mono">
+          <tr>
+            <td colspan="3" class="py-3 text-slate-500 text-center italic">Keine Beton-Alarme registriert</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Tab Navigation -->
+  <div class="flex gap-2 border-b border-slate-800 pb-2 mb-6 overflow-x-auto">
+    {% for box in boxes %}
+    <button onclick="switchTab('{{ box.id }}')" id="tab-btn-{{ box.id }}" 
+            class="tab-btn px-4 py-2 rounded-lg text-xs font-medium border border-slate-800 bg-slate-900 text-slate-400 hover:text-white transition whitespace-nowrap flex items-center gap-2">
+      <span id="tab-dot-{{ box.id }}" class="w-2 h-2 rounded-full bg-slate-600"></span>
+      {{ box.name }}
+    </button>
+    {% endfor %}
+  </div>
+
+  <!-- Box-Ansichten -->
+  <div class="space-y-6">
+    {% for box in boxes %}
+    <div id="tab-content-{{ box.id }}" class="tab-content space-y-4 hidden">
+      
+      <!-- Box Header & Controls -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-wrap justify-between items-center gap-3">
+        <div>
+          <div class="flex items-center gap-2">
+            <h2 class="text-base font-semibold text-white">{{ box.name }}</h2>
+            <span id="status-pill-{{ box.id }}" class="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-slate-800 text-slate-400 border border-slate-700">OFFLINE</span>
+          </div>
+          <span class="text-xs font-mono text-slate-400">{{ box.id }} &bull; Topic: {{ box.topic }}</span>
+        </div>
+
+        <div class="flex items-center gap-3 font-mono text-xs">
+          <div class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-center">
+            <div class="text-slate-500 text-[10px]">UMGEBUNG</div>
+            <div id="val-ambient-{{ box.id }}" class="text-slate-200 font-bold text-sm">--.- °C</div>
+          </div>
+          <div class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-center">
+            <div class="text-slate-500 text-[10px]">FEUCHTE</div>
+            <div id="val-humidity-{{ box.id }}" class="text-slate-200 font-bold text-sm">--.- %</div>
+          </div>
+          {% if box.grafana_url %}
+          <a href="{{ box.grafana_url }}" target="_blank" class="bg-slate-800 hover:bg-slate-700 text-sky-400 px-3 py-2 rounded-lg border border-slate-700 transition">
+            📈 Grafana
+          </a>
+          {% endif %}
+          <button onclick="sendCmd('{{ box.id }}', 'status', this)" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-2 rounded-lg border border-slate-700 active:scale-95 transition">
+            📊 Status
+          </button>
+        </div>
+      </div>
+
+      <!-- Live ntfy Message Box -->
+      <div class="bg-slate-950/80 border border-slate-800 rounded-lg p-3 text-xs font-mono">
+        <div class="flex justify-between text-slate-500 mb-1">
+          <span>Letzte empfangene Box-Meldung</span>
+          <span id="msg-time-{{ box.id }}">-</span>
+        </div>
+        <div id="msg-text-{{ box.id }}" class="text-slate-300 whitespace-pre-wrap">Warte auf Meldungen...</div>
+      </div>
+
+      <!-- Kanäle Grid (0-basierte IDs z.B. temp0..temp3) -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {% for ch in box.channels %}
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-3 flex flex-col justify-between gap-3">
+          <div class="flex justify-between items-start">
+            <div>
+              <div class="text-sm font-semibold text-slate-200">{{ ch.label }}</div>
+              <div class="text-[11px] font-mono text-slate-500">{{ ch.id }}</div>
+            </div>
+            <div class="text-right font-mono">
+              <div id="val-ch-{{ box.id }}-{{ ch.id }}" class="text-base font-bold text-white">--.- °C</div>
+              <span id="badge-ch-{{ box.id }}-{{ ch.id }}" class="badge-RESET px-2 py-0.5 rounded text-[10px] font-bold inline-block mt-0.5">BEREIT</span>
+            </div>
+          </div>
+
+          <div class="flex gap-1.5 pt-2 border-t border-slate-800/80">
+            <button onclick="sendCmd('{{ box.id }}', 'runn:{{ ch.id }}', this)" class="flex-1 bg-emerald-700 hover:bg-emerald-600 active:bg-emerald-800 text-white font-bold py-1.5 rounded text-xs transition">START</button>
+            <button onclick="sendCmd('{{ box.id }}', 'export:{{ ch.id }}', this)" class="flex-1 bg-amber-600 hover:bg-amber-500 active:bg-amber-700 text-white font-bold py-1.5 rounded text-xs transition">EXP</button>
+            <button onclick="sendCmd('{{ box.id }}', 'reset:{{ ch.id }}', this)" class="flex-1 bg-rose-700 hover:bg-rose-600 active:bg-rose-800 text-white font-bold py-1.5 rounded text-xs transition">RST</button>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+
+      <!-- Archivierter Export (2 Spalten: CSV & PNG nebeneinander, 3 Zeilen Scrollbereich) -->
+      <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+        <span class="text-xs font-semibold text-slate-400 block mb-3 font-mono uppercase">📁 Archivierte Exporte (CSV & PNG)</span>
+        
+        <div class="scroll-3-lines pr-1">
+          <div id="files-{{ box.id }}" class="space-y-2 text-xs">
+            <span class="text-slate-500 italic block py-2">Keine Exporte vorhanden</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+    {% endfor %}
+  </div>
+
+  <div id="toast" class="fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2.5 rounded-lg text-xs font-semibold shadow-xl border transition-opacity duration-200 opacity-0 pointer-events-none z-50"></div>
+
+  <script>
+    let activeBoxId = "{{ boxes[0].id if boxes else '' }}";
+
+    function switchTab(boxId) {
+      activeBoxId = boxId;
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+      document.querySelectorAll('.tab-btn').forEach(el => {
+        el.classList.remove('bg-slate-800', 'text-white', 'border-slate-600');
+        el.classList.add('bg-slate-900', 'text-slate-400', 'border-slate-800');
+      });
+
+      const activeContent = document.getElementById(`tab-content-${boxId}`);
+      if (activeContent) activeContent.classList.remove('hidden');
+
+      const activeBtn = document.getElementById(`tab-btn-${boxId}`);
+      if (activeBtn) {
+        activeBtn.classList.remove('bg-slate-900', 'text-slate-400', 'border-slate-800');
+        activeBtn.classList.add('bg-slate-800', 'text-white', 'border-slate-600');
+      }
+    }
+
+    async function sendCmd(boxId, cmd, btn) {
+      const orig = btn.innerText;
+      btn.innerText = "⏳";
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/send-cmd', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ box_id: boxId, cmd: cmd })
+        });
+        const data = await res.json();
+        showToast(data.success ? `Gesendet: ${cmd}` : `Fehler`, data.success ? 'success' : 'error');
+        fetchData();
+      } catch (e) {
+        showToast('Netzwerkfehler', 'error');
+      } finally {
+        btn.innerText = orig;
+        btn.disabled = false;
+      }
+    }
+
+    function showToast(msg, type) {
+      const toast = document.getElementById('toast');
+      toast.innerText = msg;
+      toast.className = `fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2.5 rounded-lg text-xs font-semibold shadow-xl border transition-opacity duration-200 z-50 ${
+        type === 'success' ? 'bg-emerald-900 border-emerald-700 text-emerald-200' : 'bg-rose-900 border-rose-700 text-rose-200'
+      } opacity-100`;
+      setTimeout(() => { toast.classList.add('opacity-0'); }, 2500);
+    }
+
+    async function fetchData() {
+      try {
+        const res = await fetch('/api/live-data');
+        const data = await res.json();
+
+        // 1. Triggers (Beton-Alarme)
+        const triggerBody = document.getElementById('trigger-table-body');
+        if (data.triggers && data.triggers.length > 0) {
+          triggerBody.innerHTML = data.triggers.map(t => `
+            <tr>
+              <td class="py-1.5 text-slate-400 whitespace-nowrap pr-2">${t.time.split(' ')[1] || t.time}</td>
+              <td class="py-1.5 font-semibold text-rose-300 whitespace-nowrap pr-2">${t.box_name}</td>
+              <td class="py-1.5 text-slate-300">${t.title ? '<span class="text-rose-400 font-semibold">' + t.title + ':</span> ' : ''}${t.message}</td>
+            </tr>
+          `).join('');
+        } else {
+          triggerBody.innerHTML = `<tr><td colspan="3" class="py-2 text-slate-500 text-center italic">Keine Beton-Alarme vorhanden</td></tr>`;
+        }
+
+        // 2. Boxen
+        for (const [bid, bdata] of Object.entries(data.boxes)) {
+          const dot = document.getElementById(`tab-dot-${bid}`);
+          if (dot) dot.className = `w-2 h-2 rounded-full ${bdata.online ? 'bg-emerald-400' : 'bg-rose-500'}`;
+
+          const pill = document.getElementById(`status-pill-${bid}`);
+          if (pill) {
+            pill.innerText = bdata.online ? 'ONLINE' : 'OFFLINE';
+            pill.className = `px-2 py-0.5 rounded text-[10px] font-mono font-semibold border ${
+              bdata.online ? 'bg-emerald-950 text-emerald-400 border-emerald-800' : 'bg-rose-950 text-rose-400 border-rose-800'
+            }`;
+          }
+
+          const elAmb = document.getElementById(`val-ambient-${bid}`);
+          if (elAmb) elAmb.innerText = bdata.ambient != null ? `${bdata.ambient.toFixed(1)} °C` : '--.- °C';
+
+          const elHum = document.getElementById(`val-humidity-${bid}`);
+          if (elHum) elHum.innerText = bdata.humidity != null ? `${bdata.humidity.toFixed(1)} %` : '--.- %';
+
+          if (bdata.last_message) {
+            document.getElementById(`msg-text-${bid}`).innerText = `${bdata.last_message.title ? bdata.last_message.title + '\n' : ''}${bdata.last_message.message}`;
+            document.getElementById(`msg-time-${bid}`).innerText = bdata.last_message.time;
+          }
+
+          if (bdata.channel_temps) {
+            for (const [chid, cval] of Object.entries(bdata.channel_temps)) {
+              const elVal = document.getElementById(`val-ch-${bid}-${chid}`);
+              if (elVal) elVal.innerText = cval != null ? `${cval.toFixed(1)} °C` : '--.- °C';
+            }
+          }
+
+          for (const [chid, st] of Object.entries(bdata.channel_states)) {
+            const elBadge = document.getElementById(`badge-ch-${bid}-${chid}`);
+            if (elBadge) {
+              elBadge.innerText = st;
+              elBadge.className = `badge-${st} px-2 py-0.5 rounded text-[10px] font-bold font-mono inline-block mt-0.5`;
+            }
+          }
+
+          // 2 Spalten: CSV & PNG nebeneinander
+          const fileBox = document.getElementById(`files-${bid}`);
+          if (fileBox) {
+            if (bdata.export_pairs && bdata.export_pairs.length > 0) {
+              fileBox.innerHTML = bdata.export_pairs.map(pair => `
+                <div class="grid grid-cols-2 gap-2 bg-slate-950 border border-slate-800/80 rounded-lg p-1.5 items-center font-mono">
+                  ${pair.csv ? `
+                    <a href="${pair.csv}" download class="flex items-center justify-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-sky-400 py-1.5 px-2 rounded text-[11px] font-semibold border border-slate-800 transition truncate">
+                      📄 CSV (${pair.name})
+                    </a>
+                  ` : `<span class="text-slate-600 text-center text-[11px] py-1.5">Kein CSV</span>`}
+                  
+                  ${pair.png ? `
+                    <a href="${pair.png}" target="_blank" class="flex items-center justify-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-emerald-400 py-1.5 px-2 rounded text-[11px] font-semibold border border-slate-800 transition truncate">
+                      📈 Graph
+                    </a>
+                  ` : `<span class="text-slate-600 text-center text-[11px] py-1.5">Kein PNG</span>`}
+                </div>
+              `).join('');
+            } else {
+              fileBox.innerHTML = `<span class="text-slate-500 italic block py-2">Keine Exporte vorhanden</span>`;
+            }
+          }
+        }
+      } catch (e) {}
+    }
+
+    if (activeBoxId) switchTab(activeBoxId);
+    setInterval(fetchData, 20000);
+    fetchData();
+  </script>
+</body>
+</html>
