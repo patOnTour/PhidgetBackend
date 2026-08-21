@@ -1,0 +1,108 @@
+# ==========================================
+# Telemetrie & Gerätedatenbank
+# ==========================================
+
+Server:
+  ntfy_server_url: "https://ntfy.concretum-setting.com"
+  grafana:
+    server_url: "https://grafana.concretum-setting.com"
+    uid: "paskgph"
+    slug: "temperatur"
+    params:
+      orgId: 1
+      from: "now-1h"
+      to: "now"
+      timezone: "browser"
+      refresh: "10s"
+  probe_detection:
+    delta_t_min: 0.80
+    slope_min: 0.015
+    rot_peak_min: 0.035
+
+baustellenkoffer_1:
+  name: "Baustellenkoffer 1"
+  box_label: "Box 1"
+  channel_count: 4
+  device_id: "ccssite01"
+  serial: null
+  ntfy_channel: "Concretum"
+  ip_lan: null
+  mac_lan: "00:1b:0b:10:3d:44"
+  mac_wlan: "1c:bf:ce:97:58:ea"
+  workstation: null
+
+baustellenkoffer_2:
+  name: "Baustellenkoffer 2"
+  box_label: "Box 2"
+  channel_count: 4
+  device_id: "ccssite02"
+  serial: null
+  ntfy_channel: "Concretum"
+  ip_lan: null
+  mac_lan: "00:1b:0b:10:42:c6"
+  mac_wlan: "e8:4e:06:b3:98:4e"
+  workstation: null
+  probe_detection:
+    delta_t_min: 0.85
+    slope_min: 0.018
+    rot_peak_min: 0.040
+
+ebilab_klimaraum:
+  name: "EbiLab - Klimaraum (Schwindraum)"
+  box_label: "EbiLab - Klimaraum"
+  channel_count: 8
+  device_id: "ebilabklimaraum"
+  serial: 794325
+  ntfy_channel: "EbiLab"
+  ip_lan: "10.161.20.212"
+  mac_lan: "00:1b:0b:10:3f:45"
+  mac_wlan: "e8:4e:06:9c:ce:65"
+  workstation: "Matteo"
+
+ebilab_playground:
+  name: "EbiLab - Playground (Spielplatz)"
+  box_label: "EbiLab - Playground"
+  channel_count: 8
+  device_id: "ebilabplayground"
+  serial: 624420
+  ntfy_channel: "EbiLab"
+  ip_lan: "10.161.20.158"
+  mac_lan: "00:1b:0b:10:3c:39"
+  mac_wlan: "1c:bf:ce:0c:c5:35"
+  workstation: "Salvatore"
+
+ebilab_arctic:
+  name: "EbiLab - Klimakammer (Arctic)"
+  box_label: "EbiLab - Klimakammer (Arctic)"
+  channel_count: 4
+  device_id: "ebilabklimakammer"
+  serial: null
+  ntfy_channel: "EbiLab"
+  ip_lan: null
+  mac_lan: null
+  mac_wlan: null
+  workstation: null
+
+ebirec:
+  name: "Ebirec"
+  box_label: "Ebirec"
+  channel_count: 8
+  device_id: "ebirec"
+  serial: 802558
+  ntfy_channel: "Ebirec"
+  ip_lan: "10.161.20.154"
+  mac_lan: "00:1b:0b:10:42:d1"
+  mac_wlan: "e8:4e:06:9c:ce:89"
+  workstation: "Pädi"
+
+dummy:
+  name: "Dummy"
+  box_label: "Dummy"
+  channel_count: 8
+  device_id: "ccssite99"
+  serial: null
+  ntfy_channel: "Test"
+  ip_lan: null
+  mac_lan: null
+  mac_wlan: null
+  workstation: null

@@ -53,7 +53,6 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD}
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_SERVER_ROOT_URL=${GF_SERVER_ROOT_URL}
-      # --- Cloudflare Zero Trust Auth-Proxy ---
       - GF_AUTH_PROXY_ENABLED=true
       - GF_AUTH_PROXY_HEADER_NAME=Cf-Access-Authenticated-User-Email
       - GF_AUTH_PROXY_HEADER_PROPERTY=email
@@ -80,6 +79,10 @@ services:
     environment:
       - NTFY_BASE_URL=${NTFY_BASE_URL}
       - NTFY_BEHIND_PROXY=true
+      - NTFY_ATTACHMENT_CACHE_DIR=/var/cache/ntfy/attachments
+      - NTFY_ATTACHMENT_TOTAL_SIZE_LIMIT=5G
+      - NTFY_ATTACHMENT_FILE_SIZE_LIMIT=15M
+      - NTFY_ATTACHMENT_EXPIRY_DURATION=48h
     volumes:
       - ./ntfy_cache:/var/cache/ntfy
     ports:
@@ -98,12 +101,70 @@ services:
       - DB_NAME=${POSTGRES_DB}
       - DB_USER=${POSTGRES_USER}
       - DB_PASS=${POSTGRES_PASSWORD}
+      - YAML_CONFIG_PATH=/app/config/devices.yaml
+      - PIP_DISABLE_PIP_VERSION_CHECK=1
+      - PIP_ROOT_USER_ACTION=ignore
     volumes:
       - ./phidget-dashboard:/app
     command: >
-      sh -c "pip install --no-cache-dir flask requests psycopg2-binary && python app.py"
+      sh -c "pip install -q --no-cache-dir flask requests psycopg2-binary pyyaml && python app.py"
     ports:
       - "8080:8080"
+    networks:
+      - telemetry_net
+
+  server-analyzer:
+    image: python:3.11-slim
+    container_name: server_analyzer
+    restart: unless-stopped
+    working_dir: /app
+    environment:
+      - DB_HOST=timescaledb
+      - DB_PORT=5432
+      - DB_NAME=${POSTGRES_DB}
+      - DB_USER=${POSTGRES_USER}
+      - DB_PASS=${POSTGRES_PASSWORD}
+      - NTFY_URL=http://ntfy:80
+      - ARCHIVE_DIR=/app/archive
+      - YAML_CONFIG_PATH=/app/config/devices.yaml
+      - PIP_DISABLE_PIP_VERSION_CHECK=1
+      - PIP_ROOT_USER_ACTION=ignore
+    volumes:
+      - ./analyzer:/app
+      - ./phidget-dashboard/archive:/app/archive
+      - ./phidget-dashboard/config:/app/config
+    command: >
+      sh -c "pip install -q --no-cache-dir psycopg2-binary requests numpy pandas matplotlib pyyaml && python server_analyzer.py"
+    depends_on:
+      - timescaledb
+      - ntfy
+    networks:
+      - telemetry_net
+
+  probe-detector:
+    image: python:3.11-slim
+    container_name: probe_detector_analyzer
+    restart: unless-stopped
+    working_dir: /app
+    environment:
+      - DB_HOST=timescaledb
+      - DB_PORT=5432
+      - DB_NAME=${POSTGRES_DB}
+      - DB_USER=${POSTGRES_USER}
+      - DB_PASS=${POSTGRES_PASSWORD}
+      - NTFY_URL=http://ntfy:80
+      - INGEST_CONTROL_URL=https://telemetry.concretum-setting.com/api/v1/control/start-channel
+      - YAML_CONFIG_PATH=/app/config/devices.yaml
+      - PIP_DISABLE_PIP_VERSION_CHECK=1
+      - PIP_ROOT_USER_ACTION=ignore
+    volumes:
+      - ./analyzer:/app
+      - ./phidget-dashboard/config:/app/config
+    command: >
+      sh -c "pip install -q --no-cache-dir psycopg2-binary requests pyyaml numpy && python3 -u probe_detector_analyzer.py"
+    depends_on:
+      - timescaledb
+      - ntfy
     networks:
       - telemetry_net
 

@@ -1,0 +1,85 @@
+body { 
+  background-color: #0b1120; 
+  color: #f8fafc; 
+  font-family: system-ui, -apple-system, sans-serif; 
+}
+
+/* Status-Badges */
+.badge-RUNNING { 
+  background-color: rgba(16, 185, 129, 0.2); 
+  color: #34d399; 
+  border: 1px solid rgba(16, 185, 129, 0.4); 
+}
+
+.badge-TURNING { 
+  background-color: rgba(56, 189, 248, 0.2); 
+  color: #38bdf8; 
+  border: 1px solid rgba(56, 189, 248, 0.4); 
+}
+
+.badge-TRIGGERED { 
+  background-color: rgba(239, 68, 68, 0.25); 
+  color: #f87171; 
+  border: 1px solid rgba(239, 68, 68, 0.5); 
+  animation: pulse 2s infinite; 
+}
+
+.badge-FINISHED { 
+  background-color: rgba(168, 85, 247, 0.2); 
+  color: #c084fc; 
+  border: 1px solid rgba(168, 85, 247, 0.4); 
+}
+
+.badge-RESET { 
+  background-color: rgba(148, 163, 184, 0.1); 
+  color: #94a3b8; 
+  border: 1px solid rgba(148, 163, 184, 0.2); 
+}
+
+.badge-EXPORT { 
+  background-color: rgba(245, 158, 11, 0.2); 
+  color: #fbbf24; 
+  border: 1px solid rgba(245, 158, 11, 0.4); 
+}
+
+/* Scrollbereich (max. 3 Zeilen) */
+.scroll-3-lines {
+  max-height: 140px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Scrollbars: Firefox */
+html, body, * {
+  scrollbar-width: thin !important;
+  scrollbar-color: #334155 #0b1120 !important;
+}
+
+/* Scrollbars: WebKit */
+::-webkit-scrollbar {
+  width: 6px !important;
+  height: 6px !important;
+}
+
+::-webkit-scrollbar-track {
+  background: #0b1120 !important;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #334155 !important;
+  border-radius: 4px !important;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #475569 !important;
+}
+
+::-webkit-scrollbar-button {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+::-webkit-scrollbar-corner {
+  background: #0b1120 !important;
+}

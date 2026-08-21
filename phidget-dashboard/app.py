@@ -1,19 +1,15 @@
 import os
-import json
 import re
-import threading
-import time
-import requests
+import yaml
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from datetime import datetime, timezone
 from flask import Flask, render_template, jsonify, request, send_from_directory, abort
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(BASE_DIR, "config", "config.json")
+YAML_PATH = os.environ.get("YAML_CONFIG_PATH", os.path.join(BASE_DIR, "config", "devices.yaml"))
 ARCHIVE_DIR = os.path.join(BASE_DIR, "archive")
 
-# Datenbank-Konfiguration (zieht Werte sauber aus Umgebungsvariablen)
 DB_HOST = os.environ.get("DB_HOST", "timescaledb")
 DB_PORT = int(os.environ.get("DB_PORT", 5432))
 DB_NAME = os.environ.get("DB_NAME", "telemetry_db")
@@ -21,121 +17,125 @@ DB_USER = os.environ.get("DB_USER", "postgres")
 DB_PASS = os.environ.get("DB_PASS", "")
 
 app = Flask(__name__)
+app.config['TEMPLATES_AUTO_RELOAD'] = True
 
-channel_states = {}   # {box_id: {temp0: "RESET", ...}}
-latest_messages = {}  # {box_id: {"message": "...", "time": "13:56:00", "title": "..."}}
-trigger_events = []   # [{"box_id": "...", "box_name": "...", "time": "...", "title": "...", "message": "..."}]
-
-def load_config():
-    if not os.path.exists(CONFIG_PATH):
-        return {"default_ntfy_server": "https://ntfy.sh", "boxes": []}
+def load_yaml_raw():
+    if not os.path.exists(YAML_PATH):
+        return {"Server": {}}
     try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
+        with open(YAML_PATH, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
     except Exception as e:
-        print(f"[Config Error] {e}", flush=True)
-        return {"default_ntfy_server": "https://ntfy.sh", "boxes": []}
+        print(f"[YAML Load Error] {e}", flush=True)
+        return {}
+
+def get_parsed_config():
+    data = load_yaml_raw()
+    server_cfg = data.get("Server", {})
+    g_cfg = server_cfg.get("grafana", {})
+
+    boxes = []
+    for key, val in data.items():
+        if key == "Server" or not isinstance(val, dict):
+            continue
+        dev_id = val.get("device_id", key)
+        ch_count = int(val.get("channel_count", 4))
+        custom_labels = val.get("channel_labels", {})
+
+        channels = []
+        for i in range(ch_count):
+            ch_id = f"temp{i}"
+            ch_label = custom_labels.get(ch_id, f"Kanal {i + 1}")
+            channels.append({"id": ch_id, "label": ch_label})
+        
+        grafana_url = None
+        if g_cfg.get("server_url") and g_cfg.get("uid") and g_cfg.get("slug"):
+            params = g_cfg.get("params", {})
+            grafana_url = (
+                f"{g_cfg['server_url']}/d/{g_cfg['uid']}/{g_cfg['slug']}?"
+                f"orgId={params.get('orgId', 1)}&"
+                f"from={params.get('from', 'now-1h')}&"
+                f"to={params.get('to', 'now')}&"
+                f"timezone={params.get('timezone', 'browser')}&"
+                f"var-device={dev_id}&"
+                f"refresh={params.get('refresh', '10s')}"
+            )
+
+        boxes.append({
+            "yaml_key": key,
+            "id": dev_id,
+            "name": val.get("name", key),
+            "box_label": val.get("box_label", ""),
+            "topic": val.get("ntfy_channel", "Concretum"),
+            "channel_count": ch_count,
+            "serial": val.get("serial"),
+            "ip_lan": val.get("ip_lan"),
+            "mac_lan": val.get("mac_lan"),
+            "mac_wlan": val.get("mac_wlan"),
+            "workstation": val.get("workstation"),
+            "probe_detection": val.get("probe_detection", {}),
+            "grafana_url": grafana_url,
+            "channels": channels
+        })
+    return {"server": server_cfg, "boxes": boxes}
 
 def get_db_connection():
     try:
-        return psycopg2.connect(
-            host=DB_HOST,
-            port=DB_PORT,
-            dbname=DB_NAME,
-            user=DB_USER,
-            password=DB_PASS,
-            connect_timeout=3
+        conn = psycopg2.connect(
+            host=DB_HOST, port=DB_PORT, dbname=DB_NAME, user=DB_USER, password=DB_PASS, connect_timeout=3
         )
-    except Exception:
-        return None
-
-def parse_and_update_channel_status(box_id, message_text):
-    if not message_text:
-        return
-    if box_id not in channel_states:
-        channel_states[box_id] = {}
-
-    # Strenger Matcher: nur definierte Statuswörter parsen
-    pattern = r"(?:`|\b)(temp\d+)(?:`|\b)[^:]*:\s*(?:[^\w\s]+\s*)?(RESET|RUNNING|TRIGGERED|FINISHED|EXPORT|STOPPED|BEREIT|OFFLINE)"
-    matches = re.findall(pattern, message_text, re.IGNORECASE)
-    for ch_id, status in matches:
-        channel_states[box_id][ch_id] = status.strip().upper()
-
-def ntfy_listener_thread(box):
-    bid = box["id"]
-    bname = box.get("name", bid)
-    topic = box.get("topic")
-    server = box.get("ntfy_server", "https://ntfy.sh").rstrip("/")
-    if not topic:
-        return
-
-    # 1. Letzte Meldung beim Start abfragen
-    try:
-        res = requests.get(f"{server}/{topic}/json?poll=1", timeout=5)
-        if res.status_code == 200:
-            for line in res.text.strip().split("\n"):
-                if not line:
-                    continue
-                data = json.loads(line)
-                if data.get("event") == "message":
-                    msg = data.get("message", "")
-                    title = data.get("title", "")
-                    t_str = datetime.fromtimestamp(data.get("time", time.time()), timezone.utc).strftime("%H:%M:%S")
-                    latest_messages[bid] = {"message": msg, "time": t_str, "title": title}
-                    parse_and_update_channel_status(bid, msg)
+        conn.autocommit = True
+        return conn
     except Exception as e:
-        print(f"[ntfy Poll Error] {bid}: {e}", flush=True)
-
-    # 2. Live SSE Event-Stream
-    while True:
-        try:
-            with requests.get(f"{server}/{topic}/json", stream=True, timeout=60) as resp:
-                for line in resp.iter_lines():
-                    if not line:
-                        continue
-                    event_data = json.loads(line.decode("utf-8"))
-                    if event_data.get("event") == "message":
-                        msg = event_data.get("message", "")
-                        title = event_data.get("title", "")
-                        t_str = datetime.fromtimestamp(event_data.get("time", time.time()), timezone.utc).strftime("%H:%M:%S")
-
-                        latest_messages[bid] = {"message": msg, "time": t_str, "title": title}
-                        parse_and_update_channel_status(bid, msg)
-
-                        if any(k in msg.upper() or k in title.upper() for k in ["TRIGGER", "ALARM", "FERTIG"]):
-                            trigger_events.insert(0, {
-                                "box_id": bid,
-                                "box_name": bname,
-                                "time": t_str,
-                                "title": title,
-                                "message": msg
-                            })
-                            del trigger_events[20:]
-        except Exception:
-            time.sleep(5)
-
-def start_background_listeners():
-    cfg = load_config()
-    for box in cfg.get("boxes", []):
-        threading.Thread(target=ntfy_listener_thread, args=(box,), daemon=True).start()
-
-start_background_listeners()
-
-# ==================== ROUTEN ====================
+        print(f"[DB Connect Error] {e}", flush=True)
+        return None
 
 @app.route("/")
 def index():
-    config = load_config()
-    return render_template("index.html", boxes=config.get("boxes", []), config=config)
+    cfg = get_parsed_config()
+    return render_template("index.html", boxes=cfg["boxes"], config=cfg)
+
+@app.route("/config")
+def config_page():
+    cfg = get_parsed_config()
+    return render_template("config.html", boxes=cfg["boxes"], server=cfg["server"])
 
 @app.route("/api/live-data")
 def live_data():
-    config = load_config()
+    cfg = get_parsed_config()
     conn = get_db_connection()
     boxes_status = {}
+    db_triggers = []
     now = datetime.now(timezone.utc)
 
-    for box in config.get("boxes", []):
+    box_names = {b["id"]: b["name"] for b in cfg["boxes"]}
+
+    if conn:
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT id, device_id, channel, event_type, event_time, title, message
+                    FROM alerts_history
+                    WHERE acknowledged = FALSE
+                    ORDER BY event_time DESC
+                    LIMIT 20;
+                """)
+                for r in cur.fetchall():
+                    t_val = r["event_time"]
+                    if t_val.tzinfo is None:
+                        t_val = t_val.replace(tzinfo=timezone.utc)
+                    db_triggers.append({
+                        "id": r["id"],
+                        "box_id": r["device_id"],
+                        "box_name": box_names.get(r["device_id"], r["device_id"]),
+                        "time": t_val.strftime("%H:%M:%S"),
+                        "title": r["title"],
+                        "message": r["message"]
+                    })
+        except Exception as e:
+            print(f"[DB Alerts Error] {e}", flush=True)
+
+    for box in cfg["boxes"]:
         bid = box["id"]
         box_data = {
             "online": False,
@@ -143,8 +143,8 @@ def live_data():
             "ambient": None,
             "humidity": None,
             "channel_temps": {},
-            "channel_states": channel_states.get(bid, {}),
-            "last_message": latest_messages.get(bid, None),
+            "channel_states": {},
+            "last_message": None,
             "export_pairs": []
         }
 
@@ -152,10 +152,10 @@ def live_data():
             try:
                 with conn.cursor(cursor_factory=RealDictCursor) as cur:
                     cur.execute("""
-                        SELECT DISTINCT ON (channel) time, channel, temperature, job_id
+                        SELECT DISTINCT ON (channel) channel, temperature, time, job_id
                         FROM telemetry_data
-                        WHERE device_id = %s
-                        ORDER BY channel, time DESC
+                        WHERE device_id = %s AND time <= NOW()
+                        ORDER BY channel, time DESC;
                     """, (bid,))
                     rows = cur.fetchall()
 
@@ -181,10 +181,39 @@ def live_data():
                         delta_sec = (now - latest_time).total_seconds()
                         box_data["online"] = delta_sec < 90
                         box_data["last_seen"] = latest_time.strftime("%H:%M:%S")
-            except Exception as e:
-                print(f"[DB Error] {bid}: {e}", flush=True)
 
-        # Archiv-Dateien scannen, gruppieren und nach Datum/Uhrzeit absteigend sortieren
+                    cur.execute("SELECT channel, turnaround_sent, trigger_sent, export_120_sent FROM analyzer_state WHERE device_id = %s;", (bid,))
+                    for ast in cur.fetchall():
+                        ch_key = f"temp{ast['channel']}"
+                        if ast['export_120_sent']:
+                            state_str = "FINISHED"
+                        elif ast['trigger_sent']:
+                            state_str = "TRIGGERED"
+                        elif ast['turnaround_sent']:
+                            state_str = "TURNING"
+                        else:
+                            state_str = "RUNNING"
+                        box_data["channel_states"][ch_key] = state_str
+
+                    cur.execute("SELECT title, message, event_time FROM alerts_history WHERE device_id = %s ORDER BY event_time DESC LIMIT 1;", (bid,))
+                    last_alert = cur.fetchone()
+                    if last_alert:
+                        t_val = last_alert["event_time"]
+                        if t_val.tzinfo is None:
+                            t_val = t_val.replace(tzinfo=timezone.utc)
+                        box_data["last_message"] = {
+                            "title": last_alert["title"],
+                            "message": last_alert["message"],
+                            "time": t_val.strftime("%H:%M:%S")
+                        }
+
+            except Exception as e:
+                print(f"[DB Loop Error] {bid}: {e}", flush=True)
+
+        for ch in box.get("channels", []):
+            if ch["id"] not in box_data["channel_states"]:
+                box_data["channel_states"][ch["id"]] = "RESET"
+
         box_dir = os.path.join(ARCHIVE_DIR, bid)
         if os.path.exists(box_dir):
             file_groups = {}
@@ -203,7 +232,6 @@ def live_data():
                         break
 
                 if common_key not in file_groups:
-                    # Extrahiert Zeitstempel YYYYMMDD_HHMM aus dem Dateinamen oder nutzt Dateizeit als Fallback
                     ts_match = re.search(r"(\d{8}_\d{4})", common_key)
                     try:
                         mtime = os.path.getmtime(os.path.join(box_dir, f))
@@ -223,7 +251,6 @@ def live_data():
                 elif ext == ".png":
                     file_groups[common_key]["png"] = f"/download/{bid}/{f}"
 
-            # Absteigend nach Zeitstempel sortieren (neueste Exporte immer ganz oben)
             sorted_pairs = sorted(file_groups.values(), key=lambda x: x.get("_sort_key", ""), reverse=True)
             for pair in sorted_pairs:
                 pair.pop("_sort_key", None)
@@ -235,37 +262,190 @@ def live_data():
     if conn:
         conn.close()
 
-    return jsonify({
-        "boxes": boxes_status,
-        "triggers": trigger_events[:20]
-    })
+    return jsonify({"boxes": boxes_status, "triggers": db_triggers})
+
+@app.route("/api/clear-triggers", methods=["POST"])
+def clear_triggers():
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({"success": False, "error": "Keine DB-Verbindung"}), 500
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE alerts_history SET acknowledged = TRUE WHERE acknowledged = FALSE;")
+        conn.close()
+        return jsonify({"success": True})
+    except Exception as e:
+        if conn:
+            conn.close()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route("/api/update-channel-label", methods=["POST"])
+def update_channel_label():
+    data = request.get_json() or {}
+    box_id = data.get("box_id", "").strip().lower()
+    ch_id = data.get("channel_id", "").strip().lower()
+    label = data.get("label", "").strip()
+
+    if not box_id or not ch_id:
+        return jsonify({"success": False, "error": "box_id und channel_id erforderlich"}), 400
+
+    raw_yaml = load_yaml_raw()
+    target_key = None
+    for k, v in raw_yaml.items():
+        if k == "Server" or not isinstance(v, dict):
+            continue
+        if v.get("device_id", "").lower() == box_id or k.lower() == box_id:
+            target_key = k
+            break
+
+    if not target_key:
+        return jsonify({"success": False, "error": "Gerät nicht gefunden"}), 404
+
+    if "channel_labels" not in raw_yaml[target_key]:
+        raw_yaml[target_key]["channel_labels"] = {}
+
+    raw_yaml[target_key]["channel_labels"][ch_id] = label
+
+    try:
+        with open(YAML_PATH, "w", encoding="utf-8") as f:
+            yaml.dump(raw_yaml, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        return jsonify({"success": True, "label": label})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route("/api/config/save-box", methods=["POST"])
+def save_box():
+    data = request.get_json() or {}
+    yaml_key = data.get("yaml_key", "").strip()
+    dev_id = data.get("device_id", "").strip().lower()
+
+    if not dev_id or not yaml_key:
+        return jsonify({"success": False, "error": "YAML Key und Device ID sind Pflicht."}), 400
+
+    raw_yaml = load_yaml_raw()
+    if yaml_key == "Server":
+        return jsonify({"success": False, "error": "Server-Key ist reserviert."}), 400
+
+    # Bestehende channel_labels oder aus POST-Payload extrahieren
+    existing_labels = raw_yaml.get(yaml_key, {}).get("channel_labels", {})
+    for k, v in data.items():
+        if k.startswith("chlabel_"):
+            ch_name = k.replace("chlabel_", "")
+            if v.strip():
+                existing_labels[ch_name] = v.strip()
+
+    # Probe Detection Werte
+    probe_detection = {}
+    if data.get("pd_delta_t_min"):
+        probe_detection["delta_t_min"] = float(data["pd_delta_t_min"])
+    if data.get("pd_slope_min"):
+        probe_detection["slope_min"] = float(data["pd_slope_min"])
+    if data.get("pd_rot_peak_min"):
+        probe_detection["rot_peak_min"] = float(data["pd_rot_peak_min"])
+
+    box_dict = {
+        "name": data.get("name", yaml_key),
+        "box_label": data.get("box_label") or None,
+        "channel_count": int(data.get("channel_count", 4)),
+        "device_id": dev_id,
+        "serial": int(data["serial"]) if str(data.get("serial", "")).isdigit() else None,
+        "ntfy_channel": data.get("ntfy_channel", "Concretum"),
+        "ip_lan": data.get("ip_lan") or None,
+        "mac_lan": data.get("mac_lan") or None,
+        "mac_wlan": data.get("mac_wlan") or None,
+        "workstation": data.get("workstation") or None
+    }
+
+    if probe_detection:
+        box_dict["probe_detection"] = probe_detection
+    if existing_labels:
+        box_dict["channel_labels"] = existing_labels
+
+    raw_yaml[yaml_key] = box_dict
+
+    try:
+        with open(YAML_PATH, "w", encoding="utf-8") as f:
+            yaml.dump(raw_yaml, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route("/api/config/delete-box", methods=["POST"])
+def delete_box():
+    data = request.get_json() or {}
+    yaml_key = data.get("yaml_key", "").strip()
+
+    if not yaml_key or yaml_key == "Server":
+        return jsonify({"success": False, "error": "Ungültiger Key."}), 400
+
+    raw_yaml = load_yaml_raw()
+    if yaml_key in raw_yaml:
+        del raw_yaml[yaml_key]
+
+    try:
+        with open(YAML_PATH, "w", encoding="utf-8") as f:
+            yaml.dump(raw_yaml, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route("/api/send-cmd", methods=["POST"])
 def send_cmd():
     data = request.get_json() or {}
     box_id = data.get("box_id")
     cmd = data.get("cmd") or data.get("command")
+    custom_label = data.get("label")
 
     if not box_id or not cmd:
         return jsonify({"success": False, "error": "box_id und cmd erforderlich"}), 400
 
-    config = load_config()
-    target_box = next((b for b in config.get("boxes", []) if b["id"] == box_id), None)
-    if not target_box:
-        return jsonify({"success": False, "error": "Box nicht gefunden"}), 404
+    action, ch_str = cmd.split(":") if ":" in cmd else (cmd, None)
+    ch_num = int(ch_str.replace("temp", "")) if ch_str and "temp" in ch_str else 0
+    job_id = f"ch{ch_num}"
 
-    topic = target_box.get("topic")
-    server = target_box.get("ntfy_server", "https://ntfy.sh").rstrip("/")
+    if custom_label and ch_str:
+        raw_yaml = load_yaml_raw()
+        for k, v in raw_yaml.items():
+            if k != "Server" and isinstance(v, dict) and (v.get("device_id", "").lower() == box_id.lower() or k.lower() == box_id.lower()):
+                if "channel_labels" not in v:
+                    v["channel_labels"] = {}
+                v["channel_labels"][ch_str] = custom_label
+                with open(YAML_PATH, "w", encoding="utf-8") as f:
+                    yaml.dump(raw_yaml, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+                break
+
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({"success": False, "error": "Keine DB-Verbindung"}), 500
 
     try:
-        res = requests.post(
-            f"{server}/{topic}",
-            data=cmd.encode("utf-8"),
-            headers={"Title": f"Command: {box_id}"},
-            timeout=5
-        )
-        return jsonify({"success": res.status_code == 200})
+        with conn.cursor() as cur:
+            if action.startswith("run"):
+                cur.execute("DELETE FROM analyzer_state WHERE device_id = %s AND channel = %s;", (box_id, ch_num))
+                cur.execute("""
+                    INSERT INTO analyzer_state (
+                        device_id, channel, job_id, turnaround_sent, trigger_sent, 
+                        export_30_sent, export_120_sent, force_export, started_at
+                    )
+                    VALUES (%s, %s, %s, FALSE, FALSE, FALSE, FALSE, FALSE, NOW());
+                """, (box_id, ch_num, job_id))
+
+            elif action.startswith("export"):
+                cur.execute("""
+                    INSERT INTO analyzer_state (device_id, channel, job_id, started_at, force_export)
+                    VALUES (%s, %s, %s, NOW() - INTERVAL '2 hours', TRUE)
+                    ON CONFLICT (device_id, channel, job_id)
+                    DO UPDATE SET force_export = TRUE;
+                """, (box_id, ch_num, job_id))
+
+            elif action.startswith("reset"):
+                cur.execute("DELETE FROM analyzer_state WHERE device_id = %s AND channel = %s;", (box_id, ch_num))
+
+        conn.close()
+        return jsonify({"success": True})
     except Exception as e:
+        if conn:
+            conn.close()
         return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route("/download/<box_id>/<filename>")
