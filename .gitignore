@@ -6,3 +6,7 @@ ntfy_cache/
 phidget-dashboard/archive/
 __pycache__/
 *.pyc
+dump_project.py
+project_code_dump.txt
+*.dump
+*.txt
