@@ -17,7 +17,7 @@ DB_USER = os.environ.get("DB_USER", "postgres")
 DB_PASS = os.environ.get("DB_PASS", "")
 
 app = Flask(__name__)
-app.config['TEMPLATES_AUTO_RELOAD'] = True
+app.config["TEMPLATES_AUTO_RELOAD"] = True
 
 def load_yaml_raw():
     if not os.path.exists(YAML_PATH):
@@ -48,18 +48,16 @@ def get_parsed_config():
             ch_label = custom_labels.get(ch_id, f"Kanal {i + 1}")
             channels.append({"id": ch_id, "label": ch_label})
         
-        grafana_url = None
-        if g_cfg.get("server_url") and g_cfg.get("uid") and g_cfg.get("slug"):
-            params = g_cfg.get("params", {})
-            grafana_url = (
-                f"{g_cfg['server_url']}/d/{g_cfg['uid']}/{g_cfg['slug']}?"
-                f"orgId={params.get('orgId', 1)}&"
-                f"from={params.get('from', 'now-1h')}&"
-                f"to={params.get('to', 'now')}&"
-                f"timezone={params.get('timezone', 'browser')}&"
-                f"var-device={dev_id}&"
-                f"refresh={params.get('refresh', '10s')}"
-            )
+        # Grafana Basis-URLs dynamisch aus Server-Config bauen
+        grafana_base_url = g_cfg.get("server_url", "https://grafana.concretum-setting.com")
+        grafana_uid = g_cfg.get("uid", "paskgph")
+        grafana_slug = g_cfg.get("slug", "temperatur")
+        
+        grafana_panels = {
+            "temps": f"{grafana_base_url}/d-solo/{grafana_uid}/{grafana_slug}?orgId=1&panelId=2&var-device={dev_id}&theme=dark&kiosk&refresh=10s",
+            "table": f"{grafana_base_url}/d-solo/{grafana_uid}/{grafana_slug}?orgId=1&panelId=3&var-device={dev_id}&theme=dark&kiosk&refresh=10s",
+            "ambient": f"{grafana_base_url}/d-solo/{grafana_uid}/{grafana_slug}?orgId=1&panelId=4&var-device={dev_id}&theme=dark&kiosk&refresh=10s"
+        }
 
         boxes.append({
             "yaml_key": key,
@@ -74,7 +72,8 @@ def get_parsed_config():
             "mac_wlan": val.get("mac_wlan"),
             "workstation": val.get("workstation"),
             "probe_detection": val.get("probe_detection", {}),
-            "grafana_url": grafana_url,
+            "auto_detection_enabled": val.get("auto_detection_enabled", True),
+            "grafana_panels": grafana_panels,
             "channels": channels
         })
     return {"server": server_cfg, "boxes": boxes}
@@ -140,10 +139,12 @@ def live_data():
         box_data = {
             "online": False,
             "last_seen": "Nie",
+            "pending_count": 0,
             "ambient": None,
             "humidity": None,
             "channel_temps": {},
             "channel_states": {},
+            "channel_starts_ms": {},
             "last_message": None,
             "export_pairs": []
         }
@@ -177,23 +178,42 @@ def live_data():
                         else:
                             box_data["channel_temps"][f"temp{ch_num}"] = val
 
+                    # Status & Pufferstand aus device_status laden
+                    cur.execute("SELECT last_seen, pending_count FROM device_status WHERE device_id = %s;", (bid,))
+                    stat_row = cur.fetchone()
+                    if stat_row:
+                        box_data["pending_count"] = stat_row.get("pending_count", 0)
+                        ls_time = stat_row.get("last_seen")
+                        if ls_time:
+                            if ls_time.tzinfo is None:
+                                ls_time = ls_time.replace(tzinfo=timezone.utc)
+                            if latest_time is None or ls_time > latest_time:
+                                latest_time = ls_time
+
                     if latest_time:
                         delta_sec = (now - latest_time).total_seconds()
                         box_data["online"] = delta_sec < 90
                         box_data["last_seen"] = latest_time.strftime("%H:%M:%S")
 
-                    cur.execute("SELECT channel, turnaround_sent, trigger_sent, export_120_sent FROM analyzer_state WHERE device_id = %s;", (bid,))
+                    cur.execute("SELECT channel, turnaround_sent, trigger_sent, export_120_sent, started_at FROM analyzer_state WHERE device_id = %s;", (bid,))
                     for ast in cur.fetchall():
                         ch_key = f"temp{ast['channel']}"
-                        if ast['export_120_sent']:
+                        if ast["export_120_sent"]:
                             state_str = "FINISHED"
-                        elif ast['trigger_sent']:
+                        elif ast["trigger_sent"]:
                             state_str = "TRIGGERED"
-                        elif ast['turnaround_sent']:
+                        elif ast["turnaround_sent"]:
                             state_str = "TURNING"
                         else:
                             state_str = "RUNNING"
                         box_data["channel_states"][ch_key] = state_str
+
+                        # Startzeitpunkt in Millisekunden für Grafana Zoom
+                        if ast.get("started_at"):
+                            st_dt = ast["started_at"]
+                            if st_dt.tzinfo is None:
+                                st_dt = st_dt.replace(tzinfo=timezone.utc)
+                            box_data["channel_starts_ms"][ch_key] = int(st_dt.timestamp() * 1000)
 
                     cur.execute("SELECT title, message, event_time FROM alerts_history WHERE device_id = %s ORDER BY event_time DESC LIMIT 1;", (bid,))
                     last_alert = cur.fetchone()
@@ -264,6 +284,33 @@ def live_data():
 
     return jsonify({"boxes": boxes_status, "triggers": db_triggers})
 
+@app.route("/api/toggle-autodetect", methods=["POST"])
+def toggle_autodetect():
+    data = request.get_json() or {}
+    box_id = data.get("box_id", "").strip().lower()
+    enabled = bool(data.get("enabled", True))
+
+    raw_yaml = load_yaml_raw()
+    target_key = None
+    for k, v in raw_yaml.items():
+        if k == "Server" or not isinstance(v, dict):
+            continue
+        if v.get("device_id", "").lower() == box_id or k.lower() == box_id:
+            target_key = k
+            break
+
+    if not target_key:
+        return jsonify({"success": False, "error": "Gerät nicht gefunden"}), 404
+
+    raw_yaml[target_key]["auto_detection_enabled"] = enabled
+
+    try:
+        with open(YAML_PATH, "w", encoding="utf-8") as f:
+            yaml.dump(raw_yaml, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        return jsonify({"success": True, "enabled": enabled})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
 @app.route("/api/clear-triggers", methods=["POST"])
 def clear_triggers():
     conn = get_db_connection()
@@ -326,7 +373,6 @@ def save_box():
     if yaml_key == "Server":
         return jsonify({"success": False, "error": "Server-Key ist reserviert."}), 400
 
-    # Bestehende channel_labels oder aus POST-Payload extrahieren
     existing_labels = raw_yaml.get(yaml_key, {}).get("channel_labels", {})
     for k, v in data.items():
         if k.startswith("chlabel_"):
@@ -334,7 +380,6 @@ def save_box():
             if v.strip():
                 existing_labels[ch_name] = v.strip()
 
-    # Probe Detection Werte
     probe_detection = {}
     if data.get("pd_delta_t_min"):
         probe_detection["delta_t_min"] = float(data["pd_delta_t_min"])
@@ -353,7 +398,8 @@ def save_box():
         "ip_lan": data.get("ip_lan") or None,
         "mac_lan": data.get("mac_lan") or None,
         "mac_wlan": data.get("mac_wlan") or None,
-        "workstation": data.get("workstation") or None
+        "workstation": data.get("workstation") or None,
+        "auto_detection_enabled": raw_yaml.get(yaml_key, {}).get("auto_detection_enabled", True)
     }
 
     if probe_detection:
