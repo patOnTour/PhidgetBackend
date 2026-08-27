@@ -1,0 +1,30 @@
+baustellenkoffer_1:
+  name: Baustellenkoffer 1
+  box_label: Box 1
+  channel_count: 4
+  device_id: ccssite01
+  serial: 625458
+  ntfy_channel: Concretum
+  timezone: Europe/Zurich
+  ip_lan: 192.168.50.83
+  mac_lan: 00:1b:0b:10:3d:44
+  mac_wlan: 1c:bf:ce:97:58:ea
+  workstation: on Tour
+  probe_detection:
+    delta_t_min: 0.8
+    slope_min: 0.015
+    rot_peak_min: 0.035
+  turnaround_detection:
+    sg_window: 31
+    cooling_slope_min: -0.0003
+    reheating_slope_min: 0.0003
+    min_cooling_delta: 0.2
+  channel_labels:
+    temp0: LKW1 BW
+    temp1: LKW1
+    temp2: LKW2
+    temp3: LKW3
+  auto_detection_enabled: false
+  turnaround_detection_enabled: false
+  channel_recording_enabled: true
+  ntfy_enabled: false

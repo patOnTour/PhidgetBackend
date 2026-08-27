@@ -1,0 +1,30 @@
+ebilab_arctic:
+  name: EbiLab - Klimakammer (Arctic)
+  box_label: EbiLab - Klimakammer (Arctic)
+  channel_count: 4
+  device_id: ebilabklimakammer
+  serial: 794292
+  ntfy_channel: EbiLab
+  timezone: Europe/Zurich
+  ip_lan: 10.161.20.189
+  mac_lan: 00:1b:0b:10:42:d1
+  mac_wlan: e8:4e:06:9c:ce:89
+  workstation: null
+  probe_detection:
+    delta_t_min: 0.8
+    slope_min: 0.015
+    rot_peak_min: 0.035
+  turnaround_detection:
+    sg_window: 31
+    cooling_slope_min: -0.0003
+    reheating_slope_min: 0.0003
+    min_cooling_delta: 0.2
+  channel_labels:
+    temp0: Kanal 1
+    temp1: Kanal 2
+    temp2: Kanal 3
+    temp3: Kanal 4
+  auto_detection_enabled: false
+  turnaround_detection_enabled: false
+  channel_recording_enabled: false
+  ntfy_enabled: false

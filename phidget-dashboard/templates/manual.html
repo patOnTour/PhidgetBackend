@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Concretum Telemetry - Bedienungsanleitung & Quickstart</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="p-4 sm:p-8 max-w-5xl mx-auto pb-24 font-sans bg-[#0b1120] text-slate-200">
+
+  <!-- Header -->
+  <header class="mb-8 flex justify-between items-center border-b border-slate-800 pb-4">
+    <div>
+      <div class="flex items-center gap-3">
+        <span class="text-2xl font-black tracking-tight text-white uppercase">CONCRETUM</span>
+        <span class="bg-amber-500/10 text-amber-400 border border-amber-500/30 text-[10px] font-mono px-2 py-0.5 rounded font-bold">MANUAL</span>
+      </div>
+      <p class="text-xs text-slate-400 font-mono mt-0.5">Setting Telemetry & Control System — Schnellstart-Guide</p>
+    </div>
+    <a href="/" class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-4 py-2 rounded-lg border border-slate-700 transition flex items-center gap-1.5 font-semibold">
+      &larr; Zum Dashboard
+    </a>
+  </header>
+
+  <div class="space-y-8">
+
+    <!-- 1. Systemübersicht & Flotte -->
+    <!-- 1. Systemübersicht & Flotte -->
+    <section class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg space-y-4">
+      <h2 class="text-sm font-bold uppercase tracking-wider text-sky-400 flex items-center gap-2 font-mono">
+        <span>📡</span> 1. Flotte & ntfy-Push-Benachrichtigungen
+      </h2>
+      <p class="text-xs text-slate-300 leading-relaxed">
+        Jedes Messgerät sendet bei wichtigen Ereignissen (Einstich, Wendepunkt, Abbindebeginn, Reports) Benachrichtigungen auf seinen zugewiesenen ntfy-Kanal.
+      </p>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-xs font-mono border border-slate-800/80 rounded-lg overflow-hidden">
+          <thead class="bg-slate-950 text-slate-400 border-b border-slate-800">
+            <tr>
+              <th class="p-2.5">Geräte-Name</th>
+              <th class="p-2.5">Device-ID</th>
+              <th class="p-2.5">Kanäle</th>
+              <th class="p-2.5">ntfy Kanal (Abonnieren)</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-800/60 bg-slate-900/60">
+            <tr>
+              <td class="p-2.5 font-semibold text-white">Baustellenkoffer 1</td>
+              <td class="p-2.5 text-emerald-400">ccssite01</td>
+              <td class="p-2.5">4</td>
+              <td class="p-2.5">
+                <a href="https://ntfy.concretum-setting.com/Concretum" target="_blank" class="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 underline font-bold">
+                  🔔 Concretum ↗
+                </a>
+              </td>
+            </tr>
+            <tr>
+              <td class="p-2.5 font-semibold text-white">Baustellenkoffer 2</td>
+              <td class="p-2.5 text-emerald-400">ccssite02</td>
+              <td class="p-2.5">4</td>
+              <td class="p-2.5">
+                <a href="https://ntfy.concretum-setting.com/Concretum" target="_blank" class="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 underline font-bold">
+                  🔔 Concretum ↗
+                </a>
+              </td>
+            </tr>
+            <tr>
+              <td class="p-2.5 font-semibold text-white">EbiLab - Klimaraum (Schwindraum)</td>
+              <td class="p-2.5 text-emerald-400">ebilabklimaraum</td>
+              <td class="p-2.5">8</td>
+              <td class="p-2.5">
+                <a href="https://ntfy.concretum-setting.com/EbiLab" target="_blank" class="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 underline font-bold">
+                  🔔 EbiLab ↗
+                </a>
+              </td>
+            </tr>
+            <tr>
+              <td class="p-2.5 font-semibold text-white">EbiLab - Playground (Spielplatz)</td>
+              <td class="p-2.5 text-emerald-400">ebilabplayground</td>
+              <td class="p-2.5">8</td>
+              <td class="p-2.5">
+                <a href="https://ntfy.concretum-setting.com/EbiLab" target="_blank" class="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 underline font-bold">
+                  🔔 EbiLab ↗
+                </a>
+              </td>
+            </tr>
+            <tr>
+              <td class="p-2.5 font-semibold text-white">EbiLab - Klimakammer (Arctic)</td>
+              <td class="p-2.5 text-emerald-400">ebilabklimakammer</td>
+              <td class="p-2.5">4</td>
+              <td class="p-2.5">
+                <a href="https://ntfy.concretum-setting.com/EbiLab" target="_blank" class="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 underline font-bold">
+                  🔔 EbiLab ↗
+                </a>
+              </td>
+            </tr>
+            <tr>
+              <td class="p-2.5 font-semibold text-white">Ebirec</td>
+              <td class="p-2.5 text-emerald-400">ebirec</td>
+              <td class="p-2.5">8</td>
+              <td class="p-2.5">
+                <a href="https://ntfy.concretum-setting.com/Ebirec" target="_blank" class="inline-flex items-center gap-1 text-sky-400 hover:text-sky-300 underline font-bold">
+                  🔔 Ebirec ↗
+                </a>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 2. Die Schalter im Header -->
+    <section class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg space-y-4">
+      <h2 class="text-sm font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-2 font-mono">
+        <span>🎚️</span> 2. Schalter & Automatik (Housekeeping)
+      </h2>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+        <div class="p-3.5 bg-slate-950 border border-slate-800 rounded-lg space-y-2">
+          <div class="font-bold text-slate-200 font-mono text-[11px]">KANÄLE LOGGEN</div>
+          <p class="text-slate-400">
+            Aktiviert/Pausiert das Speichern der Temperaturkanäle in die Datenbank.
+          </p>
+          <span class="inline-block text-[10px] text-emerald-400 bg-emerald-950/60 border border-emerald-800 px-2 py-0.5 rounded font-mono">
+            Auto-OFF bei Messende
+          </span>
+        </div>
+
+        <div class="p-3.5 bg-slate-950 border border-slate-800 rounded-lg space-y-2">
+          <div class="font-bold text-slate-200 font-mono text-[11px]">AUTO-EINSTICH</div>
+          <p class="text-slate-400">
+            Erkennt das Einstecken einer Sonde in frischen Beton und sendet einen interaktiven ntfy-Alarm zum Direktstart.
+          </p>
+          <span class="inline-block text-[10px] text-sky-400 bg-sky-950/60 border border-sky-800 px-2 py-0.5 rounded font-mono">
+            Automatischer Messstart
+          </span>
+        </div>
+
+        <div class="p-3.5 bg-slate-950 border border-slate-800 rounded-lg space-y-2">
+          <div class="font-bold text-slate-200 font-mono text-[11px]">WENDEPUNKT</div>
+          <p class="text-slate-400">
+            Überwacht das Durchschreiten des Temperatur-Tiefstpunkts vor der Hydratations-Erwärmung.
+          </p>
+          <span class="inline-block text-[10px] text-amber-400 bg-amber-950/60 border border-amber-800 px-2 py-0.5 rounded font-mono">
+            Status: TURNING
+          </span>
+        </div>
+      </div>
+
+      <div class="bg-slate-950/80 border border-slate-800/80 p-3.5 rounded-lg text-xs font-mono text-slate-300">
+        <strong class="text-white">Wichtig:</strong> Umgebungstemperatur und Feuchte werden aus Nachvollziehbarkeitsgründen <em>immer ununterbrochen aufgezeichnet</em>, auch wenn das Kanal-Logging deaktiviert ist.
+      </div>
+    </section>
+
+    <!-- 3. Kanal-Bedienung & Status -->
+    <section class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg space-y-4">
+      <h2 class="text-sm font-bold uppercase tracking-wider text-amber-400 flex items-center gap-2 font-mono">
+        <span>🔘</span> 3. Kanal-Knöpfe & Status-Badges
+      </h2>
+
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs font-mono">
+        <div class="p-3 bg-slate-950 border border-slate-800 rounded-lg space-y-1">
+          <div class="text-emerald-400 font-bold">START</div>
+          <p class="text-slate-400 text-[11px] font-sans">
+            Startet die Analyse. Alle Koffer-Schalter springen sofort auf ON.
+          </p>
+        </div>
+        <div class="p-3 bg-slate-950 border border-slate-800 rounded-lg space-y-1">
+          <div class="text-amber-400 font-bold">EXP</div>
+          <p class="text-slate-400 text-[11px] font-sans">
+            Erzeugt sofort einen Plot & CSV und sendet diese via ntfy & Ablage im Archiv.
+          </p>
+        </div>
+        <div class="p-3 bg-slate-950 border border-slate-800 rounded-lg space-y-1">
+          <div class="text-rose-400 font-bold">RST</div>
+          <p class="text-slate-400 text-[11px] font-sans">
+            Setzt den Kanal zurück. Sind alle Kanäle inaktiv, schaltet das Kanal-Logging automatisch auf OFF.
+          </p>
+        </div>
+      </div>
+
+      <div class="p-3.5 bg-slate-950 border border-slate-800 rounded-lg text-xs space-y-2 font-mono">
+        <div class="text-slate-400 font-bold text-[11px]">Bedeutung der Status-Badges:</div>
+        <div class="flex flex-wrap gap-2 text-[11px]">
+          <span class="badge-RESET px-2 py-0.5 rounded font-bold">RESET / BEREIT</span>
+          <span class="badge-RUNNING px-2 py-0.5 rounded font-bold">RUNNING</span>
+          <span class="badge-TURNING px-2 py-0.5 rounded font-bold">TURNING (Wendepunkt)</span>
+          <span class="badge-TRIGGERED px-2 py-0.5 rounded font-bold">TRIGGERED (Abbinden)</span>
+          <span class="badge-FINISHED px-2 py-0.5 rounded font-bold">FINISHED</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. Quickview Widget -->
+    <section class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg space-y-3 text-xs">
+      <h2 class="text-sm font-bold uppercase tracking-wider text-sky-400 flex items-center gap-2 font-mono">
+        <span>📊</span> 4. Quickview Widget (Tabelle & Graph)
+      </h2>
+      <ul class="list-disc list-inside space-y-1.5 text-slate-300 leading-relaxed">
+        <li><strong>Zeitfenster:</strong> Schnellauswahl zwischen 5 Minuten, 15 Minuten, 1 Stunde und 2 Stunden.</li>
+        <li><strong>Ansicht:</strong> Umschalten zwischen interaktivem Liniendiagramm und kompakter Zahlenmatrix.</li>
+        <li><strong>Kanal-Filter:</strong> Klick auf die Kanal-Badges blendet Kurven oder Spalten gezielt ein/aus.</li>
+      </ul>
+    </section>
+
+  </div>
+</body>
+</html>

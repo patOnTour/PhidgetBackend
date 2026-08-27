@@ -1,12 +1,38 @@
+# Python & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.env
 .env
-.ssh-keys/
+.env.*
+!.env.example
+
+# Docker / Datenbank-Volumes & Mounts
 timescale_data/
 grafana_data/
 ntfy_cache/
-phidget-dashboard/archive/
-__pycache__/
-*.pyc
-dump_project.py
-project_code_dump.txt
-*.dump
-*.txt
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs & temporäre Dateien
+*.log
+logs/
+import_logs/
+*.lock
+.cache/
+
+# Export-Archive & Dumps
+archive/
+export/
+*.csv
+*.png
+code-export-*.txt
+project_export.txt
+
+# OS / Editor Reste
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/.ssh-keys/
+id_ed25519*

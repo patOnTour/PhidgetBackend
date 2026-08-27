@@ -1,0 +1,106 @@
+<!--
+@file: history.html
+@version: 2.0.0
+@date: 2026-08-27
+@description: History- & Analyseansicht im globalen Concretum Dark-Design.
+@author: Patrick Staehli
+-->
+<!DOCTYPE html>
+<html lang="{{ current_lang }}">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Concretum - Historische Analysen</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=2.1.0">
+</head>
+<body class="bg-[#0b1120] text-slate-100 p-3 sm:p-6 max-w-[1600px] mx-auto pb-24 font-sans antialiased min-h-screen">
+
+<!-- Header im identischen Design von index.html -->
+  <header class="mb-5 flex justify-between items-center border-b border-slate-800 pb-3 flex-wrap gap-2">
+    <div>
+      <h1 class="text-xl font-bold tracking-tight text-white flex items-center gap-2">
+        <span>CONCRETUM</span>
+        <span class="text-xs font-mono font-semibold px-2 py-0.5 rounded bg-sky-950 text-sky-400 border border-sky-800">HISTORY</span>
+      </h1>
+      <p class="text-xs text-slate-400 font-mono">{{ t('header.subtitle', 'Setting Telemetry & Control System') }}</p>
+    </div>
+    <div class="flex items-center gap-2 flex-wrap">
+      <a href="/" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1 rounded-lg text-xs border border-slate-700 transition flex items-center gap-1.5 font-mono">
+        <span>←</span> {{ t('header.back_to_live', 'Live-Dashboard') }}
+      </a>
+      <a href="/config" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1 rounded-lg text-xs border border-slate-700 transition flex items-center gap-1.5 font-mono">
+        {{ t('header.config_btn', 'Konfiguration') }}
+      </a>
+    </div>
+  </header>
+
+  <main>
+    <!-- Filter Panel -->
+    <section class="filter-panel font-mono">
+      <div class="filter-row">
+        <span class="text-xs font-bold text-slate-400">ZEITBEREICH:</span>
+        <button class="preset-btn" onclick="applyPreset(6, event)">6h</button>
+        <button class="preset-btn active" onclick="applyPreset(24, event)">24h</button>
+        <button class="preset-btn" onclick="applyPreset(168, event)">7 Tage</button>
+        <div class="sm:ml-auto flex flex-wrap gap-2 items-center text-xs">
+          <label class="text-slate-400">Von: <input type="datetime-local" id="start-time" class="input-dark"></label>
+          <label class="text-slate-400">Bis: <input type="datetime-local" id="end-time" class="input-dark"></label>
+          <button class="preset-btn bg-sky-900 border-sky-600 text-sky-200 hover:bg-sky-800" onclick="loadHistoryData()">Laden</button>
+        </div>
+      </div>
+
+      <div class="filter-row justify-between mb-1">
+        <span class="text-xs font-bold text-slate-400 uppercase">Geräte- & Kanal-Filter:</span>
+        <div>
+          <button type="button" class="btn-link" onclick="setSelectAll(true)">Alle auswählen</button>
+          <span class="text-slate-600">|</span>
+          <button type="button" class="btn-link" onclick="setSelectAll(false)">Alle abwählen</button>
+        </div>
+      </div>
+
+      <div class="device-tree-container">
+        {% for box in boxes %}
+        <div class="tree-row">
+          <label class="tree-parent">
+            <input type="checkbox" class="box-master-cb accent-sky-500" data-box-id="{{ box.id }}" onchange="toggleBoxChannels(this)">
+            <span>{{ box.name }}</span>
+          </label>
+          <div class="tree-children">
+            {% for ch in box.channels %}
+            <label class="tree-child-item">
+              <span class="ch-badge">├─</span>
+              <input type="checkbox" class="ch-cb accent-emerald-500" data-box-id="{{ box.id }}" data-ch-num="{{ ch.id|replace('temp', '') }}" onchange="onChildChannelChange('{{ box.id }}')">
+              <span>{{ ch.label }}</span>
+            </label>
+            {% endfor %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <!-- Chart Panel -->
+    <section class="chart-box">
+      <div id="chart-loading" class="hidden absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 font-mono text-sm text-sky-400 bg-slate-950/90 border border-slate-800 px-4 py-2 rounded-lg shadow-lg">
+        Lade Messdaten...
+      </div>
+      <div class="relative w-full h-[500px]">
+        <canvas id="historyChart"></canvas>
+      </div>
+      <div class="action-bar font-mono">
+        <span id="data-stats" class="text-xs text-slate-400"></span>
+        <div class="flex gap-2">
+          <button class="preset-btn" onclick="resetZoom()">Zoom zurücksetzen</button>
+          <button class="btn-export" onclick="exportCSV()">📥 Als CSV exportieren (Excel-kompatibel)</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="{{ url_for('static', filename='js/history.js') }}?v=1.2.0"></script>
+</body>
+</html>

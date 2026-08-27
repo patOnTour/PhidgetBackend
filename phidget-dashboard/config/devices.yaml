@@ -1,0 +1,154 @@
+Server:
+  timezone: Europe/Zurich
+  ntfy_server_url: https://ntfy.concretum-setting.com
+  grafana:
+    server_url: https://grafana.concretum-setting.com
+    uid: paskgph
+    slug: temperatur
+    params:
+      orgId: 1
+      from: now-1h
+      to: now
+      timezone: browser
+      refresh: 30s
+  probe_detection:
+    delta_t_min: 0.8
+    slope_min: 0.015
+    rot_peak_min: 0.035
+  turnaround_detection:
+    sg_window: 31
+    cooling_slope_min: -0.0003
+    reheating_slope_min: 0.0003
+    min_cooling_delta: 0.2
+baustellenkoffer_1:
+  name: Baustellenkoffer 1
+  box_label: Box 1
+  channel_count: 4
+  device_id: ccssite01
+  serial: 625458
+  ntfy_channel: Concretum
+  timezone: Europe/Zurich
+  ip_lan: 192.168.50.83
+  mac_lan: 00:1b:0b:10:3d:44
+  mac_wlan: 1c:bf:ce:97:58:ea
+  workstation: on Tour
+  channel_labels:
+    temp0: Kanal 1
+    temp1: Kanal 2
+    temp2: Kanal 3
+    temp3: Kanal 4
+  auto_detection_enabled: false
+  turnaround_detection_enabled: false
+  channel_recording_enabled: true
+baustellenkoffer_2:
+  name: Baustellenkoffer 2
+  box_label: Box 2
+  channel_count: 4
+  device_id: ccssite02
+  serial: 802547
+  ntfy_channel: Concretum
+  timezone: Europe/Zurich
+  ip_lan: 192.168.50.69
+  mac_lan: 00:1b:0b:10:42:c6
+  mac_wlan: e8:4e:06:b3:98:4e
+  workstation: onTour
+  probe_detection:
+    delta_t_min: 0.85
+    slope_min: 0.018
+    rot_peak_min: 0.04
+  turnaround_detection:
+    sg_window: 31
+    cooling_slope_min: -0.0003
+    reheating_slope_min: 0.0003
+    min_cooling_delta: 0.2
+  channel_labels:
+    temp0: Kanal 1
+    temp1: Kanal 2
+    temp2: Kanal 3
+    temp3: Kanal 4
+  auto_detection_enabled: false
+  turnaround_detection_enabled: false
+  channel_recording_enabled: true
+ebilab_klimaraum:
+  name: EbiLab - Klimaraum (Schwindraum)
+  box_label: EbiLab - Klimaraum
+  channel_count: 8
+  device_id: ebilabklimaraum
+  serial: 794325
+  ntfy_channel: EbiLab
+  timezone: Europe/Zurich
+  ip_lan: 10.161.20.212
+  mac_lan: 00:1b:0b:10:3f:45
+  mac_wlan: e8:4e:06:9c:ce:65
+  workstation: Matteo
+  auto_detection_enabled: false
+  turnaround_detection_enabled: false
+  channel_recording_enabled: false
+ebilab_playground:
+  name: EbiLab - Playground (Spielplatz)
+  box_label: EbiLab - Playground
+  channel_count: 8
+  device_id: ebilabplayground
+  serial: 624420
+  ntfy_channel: EbiLab
+  timezone: Europe/Zurich
+  ip_lan: 10.161.20.158
+  mac_lan: 00:1b:0b:10:3c:39
+  mac_wlan: 1c:bf:ce:0c:c5:35
+  workstation: Salvatore
+  auto_detection_enabled: false
+  turnaround_detection_enabled: false
+  channel_recording_enabled: false
+ebilab_arctic:
+  name: EbiLab - Klimakammer (Arctic)
+  box_label: EbiLab - Klimakammer (Arctic)
+  channel_count: 4
+  device_id: ebilabklimakammer
+  serial: null
+  ntfy_channel: EbiLab
+  timezone: Europe/Zurich
+  ip_lan: null
+  mac_lan: null
+  mac_wlan: null
+  workstation: null
+  auto_detection_enabled: false
+  turnaround_detection_enabled: false
+  channel_recording_enabled: false
+ebirec:
+  name: Ebirec
+  box_label: Ebirec
+  channel_count: 8
+  device_id: ebirec
+  serial: 802558
+  ntfy_channel: Ebirec
+  timezone: Europe/Zurich
+  ip_lan: 10.161.20.154
+  mac_lan: 00:1b:0b:10:42:d1
+  mac_wlan: e8:4e:06:9c:ce:89
+  workstation: Pädi
+  auto_detection_enabled: false
+  turnaround_detection_enabled: false
+  channel_recording_enabled: false
+dummy:
+  name: Dummy
+  box_label: Dummy
+  channel_count: 8
+  device_id: ccssite99
+  serial: null
+  ntfy_channel: Test
+  timezone: Europe/Zurich
+  ip_lan: null
+  mac_lan: null
+  mac_wlan: null
+  workstation: null
+  auto_detection_enabled: false
+  turnaround_detection_enabled: false
+  turnaround_detection:
+    sg_window: 31
+    cooling_slope_min: -0.0003
+    reheating_slope_min: 0.0003
+    min_cooling_delta: 0.15
+  channel_labels:
+    temp0: Kanal 1
+    temp1: Kanal 2
+  channel_recording_enabled: false

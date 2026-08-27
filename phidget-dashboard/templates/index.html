@@ -1,0 +1,369 @@
+<!--
+@file: index.html
+@version: 1.8.2
+@date: 2026-08-26
+@description: Dashboard-Hauptseite fuer die Koffer-Ueberwachung mit Entkopplung der Kanalnamen-Eingabe (Speichern-Button gegen Race Conditions) und automatischer Asset-Versionierung.
+@author: Patrick Stähli
+-->
+<!DOCTYPE html>
+<html lang="{{ current_lang }}">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Concretum Setting Control</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=1.7.0">
+</head>
+<body class="p-3 sm:p-6 max-w-5xl mx-auto pb-24">
+
+  <!-- Header -->
+  <header class="mb-5 flex justify-between items-center border-b border-slate-800 pb-3 flex-wrap gap-2">
+    <div>
+      <h1 class="text-xl font-bold tracking-tight text-white">CONCRETUM</h1>
+      <p class="text-xs text-slate-400 font-mono">{{ t('header.subtitle', 'Setting Telemetry & Control System') }}</p>
+    </div>
+    <div class="flex items-center gap-2 flex-wrap">
+      <!-- Ansichts-Umschalter (Tabs vs Grid) -->
+      <div class="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-0.5 font-mono text-xs">
+        <button type="button" id="btn-mode-tabs" onclick="setDashboardViewMode('tabs')" class="px-2.5 py-1 rounded bg-slate-800 text-white font-semibold transition">
+          {{ t('header.view_tabs', 'Tabs') }}
+        </button>
+        <button type="button" id="btn-mode-grid" onclick="setDashboardViewMode('grid')" class="px-2.5 py-1 rounded text-slate-400 hover:text-white transition">
+          {{ t('header.view_grid', 'Grid') }}
+        </button>
+      </div>
+
+      <!-- Sprachauswahl Dropdown -->
+      <select onchange="changeLanguage(this.value)" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-1 rounded-lg text-xs border border-slate-700 font-mono focus:outline-none focus:border-sky-500 transition">
+        {% for lang in available_languages %}
+        <option value="{{ lang.code }}" {% if current_lang == lang.code %}selected{% endif %}>
+          {{ lang.name }}
+        </option>
+        {% endfor %}
+      </select>
+
+      <!-- Konfiguration -->
+      <a href="/config" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1 rounded-lg text-xs border border-slate-700 transition flex items-center gap-1.5 font-mono">
+        {{ t('header.config_btn', 'Konfiguration') }}
+      </a>
+
+      <!-- History & Export -->
+      <a href="/history" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1 rounded-lg text-xs border border-slate-700 transition flex items-center gap-1.5 font-mono">
+        <span>📊</span> {{ t('header.history_btn', 'Verlauf & Export') }}
+      </a>
+
+      <!-- Sync Status -->
+      <span class="px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-800 text-slate-300 border border-slate-700 font-mono flex items-center">
+        {{ t('header.sync_label', 'Sync: 20s') }}
+      </span>
+    </div>
+  </header>
+
+  <!-- Alarm-Tabelle -->
+  <section class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-lg mb-6">
+    <div class="flex justify-between items-center mb-2">
+      <h2 class="text-xs font-semibold uppercase tracking-wider text-rose-400 flex items-center gap-1.5 font-mono">
+        <span>🔥</span> {{ t('alarms.title', 'Letzte Beton-Alarme') }}
+      </h2>
+      <button onclick="clearTriggers()" class="text-[11px] text-slate-400 hover:text-slate-200 border border-slate-800 hover:border-slate-700 bg-slate-950 px-2 py-0.5 rounded transition font-mono">
+        {{ t('alarms.ack_all', 'Alle quittieren') }}
+      </button>
+    </div>
+    <div class="scroll-3-lines pr-1">
+      <table class="w-full text-left text-xs">
+        <tbody id="trigger-table-body" class="divide-y divide-slate-800/60 font-mono">
+          <tr>
+            <td colspan="3" class="py-3 text-slate-500 text-center italic">{{ t('alarms.empty', 'Keine Beton-Alarme registriert') }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ==================== ANSICHT 1: EINZELANSICHT (TABS) ==================== -->
+  <div id="container-view-tabs" class="space-y-6">
+    <!-- Boxen Haupt-Navigation -->
+    <div class="flex gap-2 border-b border-slate-800 pb-2 mb-6 overflow-x-auto">
+      {% for box in boxes %}
+      <button onclick="switchTab('{{ box.id }}')" id="tab-btn-{{ box.id }}" 
+              class="tab-btn px-4 py-2 rounded-lg text-xs font-medium border border-slate-800 bg-slate-900 text-slate-400 hover:text-white transition whitespace-nowrap flex items-center gap-2">
+        <span id="tab-dot-{{ box.id }}" class="w-2 h-2 rounded-full bg-slate-600"></span>
+        {{ box.name }}
+      </button>
+      {% endfor %}
+    </div>
+
+    <!-- Box-Ansichten -->
+    <div class="space-y-6">
+      {% for box in boxes %}
+      <div id="tab-content-{{ box.id }}" class="tab-content space-y-4 hidden">
+        
+        <!-- Box Header mit Hardware Kippschaltern -->
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-wrap justify-between items-center gap-3">
+          <div>
+            <div class="flex items-center gap-2 flex-wrap">
+              <h2 class="text-base font-semibold text-white">{{ box.name }}</h2>
+              <span id="status-pill-{{ box.id }}" class="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-slate-800 text-slate-400 border border-slate-700">{{ t('box.offline', 'OFFLINE') }}</span>
+              <span id="pending-pill-{{ box.id }}" class="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-slate-800 text-slate-400 border border-slate-700">{{ t('box.buffer', 'Puffer') }}: 0</span>
+            </div>
+            <span class="text-xs font-mono text-slate-400">{{ box.id }} &bull; Topic: {{ box.topic }}</span>
+          </div>
+
+          <div class="flex items-center gap-3 font-mono text-xs flex-wrap">
+
+            <!-- Industrie Kippschalter für Auto-Einstich -->
+            <div class="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5">
+              <span class="text-[10px] text-slate-400 font-bold">{{ t('box.auto_probe', 'AUTO-EINSTICH') }}</span>
+              <label class="rocker-switch" title="{{ t('box.auto_probe_tooltip', 'Automatische Einstich-Erkennung aktivieren/pausieren') }}">
+                <input type="checkbox" id="switch-autodetect-{{ box.id }}" onchange="toggleAutoDetect('{{ box.id }}', this.checked)" {% if box.auto_detection_enabled %}checked{% endif %}>
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+
+            <!-- Industrie Kippschalter für Wendepunkt -->
+            <div class="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5">
+              <span class="text-[10px] text-slate-400 font-bold">{{ t('box.turnaround', 'WENDEPUNKT') }}</span>
+              <label class="rocker-switch" title="{{ t('box.turnaround_tooltip', 'Automatische Wendepunkt-Erkennung aktivieren/pausieren') }}">
+                <input type="checkbox" id="switch-turnaround-{{ box.id }}" onchange="toggleTurnaroundDetect('{{ box.id }}', this.checked)" {% if box.turnaround_detection_enabled %}checked{% endif %}>
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+
+            <!-- Kippschalter für Kanäle Loggen -->
+            <div class="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5">
+              <span class="text-[10px] text-slate-400 font-bold">{{ t('box.logging', 'KANÄLE LOGGEN') }}</span>
+              <label class="rocker-switch" title="{{ t('box.logging_tooltip', 'Aufzeichnung der Temperaturkanäle aktivieren/pausieren') }}">
+                <input type="checkbox" id="switch-logging-{{ box.id }}" onchange="toggleChannelRecording('{{ box.id }}', this.checked)" {% if box.channel_recording_enabled %}checked{% endif %}>
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+
+            <!-- Kippschalter für Ntfy Alarme -->
+            <div class="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5">
+              <span class="text-[10px] text-slate-400 font-bold">{{ t('box.ntfy', 'NTFY ALARME') }}</span>
+              <label class="rocker-switch" title="{{ t('box.ntfy_tooltip', 'Push-Benachrichtigungen aktivieren/stummschalten') }}">
+                <input type="checkbox" id="switch-ntfy-{{ box.id }}" onchange="toggleNtfy('{{ box.id }}', this.checked)" {% if box.ntfy_enabled %}checked{% endif %}>
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+
+            <div class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-center">
+              <div class="text-slate-500 text-[10px]">{{ t('box.ambient', 'UMGEBUNG') }}</div>
+              <div id="val-ambient-{{ box.id }}" class="text-slate-200 font-bold text-sm">--.- °C</div>
+            </div>
+            <div class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-center">
+              <div class="text-slate-500 text-[10px]">{{ t('box.humidity', 'FEUCHTE') }}</div>
+              <div id="val-humidity-{{ box.id }}" class="text-slate-200 font-bold text-sm">--.- %</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Unter-Tabs pro Koffer -->
+        <div class="flex gap-2 border-b border-slate-800/80 pb-2">
+          <button onclick="switchSubTab('{{ box.id }}', 'control')" id="subtab-btn-{{ box.id }}-control" 
+                  class="subtab-btn-{{ box.id }} px-3 py-1.5 rounded-md text-xs font-semibold bg-slate-800 text-white border border-slate-700 transition">
+            {{ t('box.subtab_control', '🎛️ Steuerung & Live') }}
+          </button>
+          <button onclick="switchSubTab('{{ box.id }}', 'quick_table')" id="subtab-btn-{{ box.id }}-quick_table" 
+                  class="subtab-btn-{{ box.id }} px-3 py-1.5 rounded-md text-xs font-semibold bg-slate-900 text-slate-400 border border-slate-800 hover:text-white transition">
+            {{ t('box.subtab_quickview', '📊 Quickview (Telemetrie)') }}
+          </button>
+        </div>
+
+        <!-- TAB 1: KANAL-STEUERUNG -->
+        <div id="subtab-content-{{ box.id }}-control" class="space-y-4">
+          <!-- Live ntfy Message Box -->
+          <div class="bg-slate-950/80 border border-slate-800 rounded-lg p-3 text-xs font-mono">
+            <div class="flex justify-between text-slate-500 mb-1">
+              <span>{{ t('box.last_msg_label', 'Letzte empfangene Box-Meldung') }}</span>
+              <span id="msg-time-{{ box.id }}">-</span>
+            </div>
+            <div id="msg-text-{{ box.id }}" class="text-slate-300 whitespace-pre-wrap">{{ t('box.waiting_msg', 'Warte auf Meldungen...') }}</div>
+          </div>
+
+          <!-- Kanäle Grid -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {% for ch in box.channels %}
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-3 flex flex-col justify-between gap-2.5">
+              <div class="flex justify-between items-start gap-2">
+                <div class="flex-1">
+                  <!-- Entkoppelt: onchange entfernt, damit das Autoupdate Eingaben nicht überschreibt -->
+                  <input type="text" id="label-input-{{ box.id }}-{{ ch.id }}" value="{{ ch.label }}" 
+                         placeholder="Messungs-Name z.B. Lucy_ID..." 
+                         class="bg-slate-950 border border-slate-800/80 hover:border-slate-700 focus:border-sky-500 rounded px-2 py-1 text-xs font-semibold text-slate-200 w-full transition">
+                  <div class="text-[10px] font-mono text-slate-500 mt-0.5 ml-1">{{ ch.id }}</div>
+                </div>
+                <div class="text-right font-mono shrink-0">
+                  <div id="val-ch-{{ box.id }}-{{ ch.id }}" class="text-base font-bold text-white">--.- °C</div>
+                  <span id="badge-ch-{{ box.id }}-{{ ch.id }}" class="badge-RESET px-2 py-0.5 rounded text-[10px] font-bold inline-block mt-0.5">{{ t('box.ready', 'BEREIT') }}</span>
+                </div>
+              </div>
+
+              <div class="flex gap-1.5 pt-2 border-t border-slate-800/80">
+                <button onclick="startMeasurement('{{ box.id }}', '{{ ch.id }}', this)" class="flex-1 bg-emerald-700 hover:bg-emerald-600 active:bg-emerald-800 text-white font-bold py-1.5 rounded text-xs transition">START</button>
+                <button onclick="sendCmd('{{ box.id }}', 'export:{{ ch.id }}', this)" class="flex-1 bg-amber-600 hover:bg-amber-500 active:bg-amber-700 text-white font-bold py-1.5 rounded text-xs transition">EXP</button>
+                <button onclick="sendCmd('{{ box.id }}', 'reset:{{ ch.id }}', this)" class="flex-1 bg-rose-700 hover:bg-rose-600 active:bg-rose-800 text-white font-bold py-1.5 rounded text-xs transition">RST</button>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+
+          <!-- Button zum expliziten Speichern der Kanalnamen (Verhindert Race Conditions bei Mehrbenutzer-Nutzung) -->
+          <div class="flex justify-end pt-1">
+            <button type="button" onclick="saveAllChannelLabels('{{ box.id }}', {{ box.channel_count }})" class="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 px-3 py-1.5 rounded-lg text-xs font-mono transition shadow">
+              💾 Kanalnamen für {{ box.name }} speichern
+            </button>
+          </div>
+
+          <!-- Archivierter Export -->
+          <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+            <span class="text-xs font-semibold text-slate-400 block mb-3 font-mono uppercase">{{ t('box.archive_title', '📁 Archivierte Exporte (CSV & PNG)') }}</span>
+            <div class="scroll-3-lines pr-1">
+              <div id="files-{{ box.id }}" class="space-y-2 text-xs">
+                <span class="text-slate-500 italic block py-2">{{ t('box.no_exports', 'Keine Exporte vorhanden') }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 2: INTERAKTIVES TELEMETRIE-WIDGET -->
+        <div id="subtab-content-{{ box.id }}-quick_table" class="space-y-3 hidden">
+          <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-lg space-y-4">
+            
+            <!-- Widget Toolbar -->
+            <div class="flex flex-wrap justify-between items-center gap-3 border-b border-slate-800/80 pb-3 font-mono text-xs">
+              
+              <!-- Zeitraum Filter -->
+              <div class="flex items-center gap-1.5 bg-slate-950 p-1 rounded-lg border border-slate-800">
+                <span class="text-slate-500 px-2 font-bold text-[10px]">{{ t('widget.range_label', 'ZEIT:') }}</span>
+                <button type="button" onclick="setWidgetRange('{{ box.id }}', 5)" class="range-btn-{{ box.id }} px-2.5 py-1 rounded text-slate-400 hover:text-white" data-min="5">5m</button>
+                <button type="button" onclick="setWidgetRange('{{ box.id }}', 15)" class="range-btn-{{ box.id }} px-2.5 py-1 rounded bg-slate-800 text-white font-semibold" data-min="15">15m</button>
+                <button type="button" onclick="setWidgetRange('{{ box.id }}', 60)" class="range-btn-{{ box.id }} px-2.5 py-1 rounded text-slate-400 hover:text-white" data-min="60">1h</button>
+                <button type="button" onclick="setWidgetRange('{{ box.id }}', 120)" class="range-btn-{{ box.id }} px-2.5 py-1 rounded text-slate-400 hover:text-white" data-min="120">2h</button>
+              </div>
+
+              <!-- View Switcher (Tabelle <-> Graph) -->
+              <div class="flex items-center bg-slate-950 p-1 rounded-lg border border-slate-800">
+                <button type="button" id="btn-view-chart-{{ box.id }}" onclick="setWidgetView('{{ box.id }}', 'chart')" class="px-3 py-1 rounded bg-sky-950 text-sky-300 font-bold border border-sky-800 flex items-center gap-1.5">
+                  <span>📈</span> {{ t('widget.view_chart', 'Graph') }}
+                </button>
+                <button type="button" id="btn-view-table-{{ box.id }}" onclick="setWidgetView('{{ box.id }}', 'table')" class="px-3 py-1 rounded text-slate-400 hover:text-white flex items-center gap-1.5">
+                  <span>📋</span> {{ t('widget.view_table', 'Tabelle') }}
+                </button>
+              </div>
+            </div>
+
+            <!-- Kanal-Mehrfachauswahl (Badges) -->
+            <div class="flex flex-wrap items-center gap-2 font-mono text-xs">
+              <span class="text-slate-500 text-[10px] font-bold">{{ t('widget.channels_label', 'KANÄLE:') }}</span>
+              <button type="button" onclick="toggleWidgetChannel('{{ box.id }}', '100')" id="tag-{{ box.id }}-100" class="ch-tag-{{ box.id }} px-2.5 py-1 rounded-md bg-sky-950/80 text-sky-300 border border-sky-800 font-semibold" data-ch="100">
+                {{ t('widget.ambient_label', 'Umgebung') }}
+              </button>
+              {% for ch in box.channels %}
+              <button type="button" onclick="toggleWidgetChannel('{{ box.id }}', '{{ loop.index0 }}')" id="tag-{{ box.id }}-{{ loop.index0 }}" class="ch-tag-{{ box.id }} px-2.5 py-1 rounded-md bg-emerald-950/80 text-emerald-300 border border-emerald-800 font-semibold" data-ch="{{ loop.index0 }}">
+                {{ ch.label }} (Ch {{ loop.index }})
+              </button>
+              {% endfor %}
+            </div>
+
+            <!-- Ansicht 1: Interaktiver Chart.js Graph -->
+            <div id="widget-view-chart-{{ box.id }}" class="w-full relative" style="height: 320px; min-height: 320px;">
+              <canvas id="canvas-widget-{{ box.id }}"></canvas>
+            </div>
+
+            <!-- Ansicht 2: Tabelle -->
+            <div id="widget-view-table-{{ box.id }}" class="hidden overflow-x-auto overflow-y-auto" style="max-height: 320px;">
+              <table class="w-full text-left text-xs font-mono">
+                <thead class="sticky top-0 bg-slate-900 border-b border-slate-800 text-slate-400">
+                  <tr id="widget-table-head-{{ box.id }}">
+                    <th class="py-2 px-2">{{ t('widget.time_col', 'Uhrzeit') }}</th>
+                  </tr>
+                </thead>
+                <tbody id="widget-table-body-{{ box.id }}" class="divide-y divide-slate-800/60 text-slate-300">
+                  <tr><td class="py-4 text-center text-slate-500 italic">{{ t('widget.loading', 'Lade Daten...') }}</td></tr>
+                </tbody>
+              </table>
+            </div>
+
+          </div>
+        </div>
+
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- ==================== ANSICHT 2: KOMPAKTE GRID-ANSICHT (FOKUS: ALARM & RELAIS) ==================== -->
+  <div id="container-view-grid" class="hidden grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+    {% for box in boxes %}
+    <div onclick="openBoxTab('{{ box.id }}')" class="bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-xl p-4 shadow-lg cursor-pointer transition flex flex-col justify-between gap-3">
+      
+      <!-- Kachel-Header -->
+      <div class="flex justify-between items-start">
+        <div>
+          <div class="flex items-center gap-2">
+            <span id="grid-dot-{{ box.id }}" class="w-2.5 h-2.5 rounded-full bg-slate-600"></span>
+            <h3 class="text-sm font-bold text-white tracking-tight">{{ box.name }}</h3>
+          </div>
+          <span class="text-[11px] font-mono text-slate-400 mt-0.5 block">{{ box.id }} &bull; {{ box.box_label or '' }}</span>
+        </div>
+        <span id="grid-status-pill-{{ box.id }}" class="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-slate-800 text-slate-400 border border-slate-700">
+          {{ t('box.offline', 'OFFLINE') }}
+        </span>
+      </div>
+
+      <!-- Relais- & Kanal-Statusmatrix (kompakt) -->
+      <div class="bg-slate-950/80 border border-slate-800/80 rounded-lg p-2.5 space-y-2 font-mono">
+        <div class="flex justify-between items-center text-[10px] text-slate-400 border-b border-slate-800 pb-1 font-semibold uppercase">
+          <span>Kanal / Relais</span>
+          <span>Status</span>
+        </div>
+        <div class="grid grid-cols-1 gap-1.5">
+          {% for ch in box.channels %}
+          <div class="flex justify-between items-center text-xs">
+            <span class="text-slate-300 truncate max-w-[150px]" title="{{ ch.label }}">{{ ch.label }}</span>
+            <div class="flex items-center gap-2 shrink-0">
+              <span id="grid-val-ch-{{ box.id }}-{{ ch.id }}" class="font-bold text-white text-[11px]">--.- °C</span>
+              <span id="grid-badge-ch-{{ box.id }}-{{ ch.id }}" class="badge-RESET px-1.5 py-0.2 rounded text-[9px] font-bold font-mono">
+                {{ t('box.ready', 'BEREIT') }}
+              </span>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <!-- Kachel-Footer mit Direktlink -->
+      <div class="flex justify-between items-center pt-1 border-t border-slate-800/60 text-[11px] font-mono text-slate-400">
+        <span class="truncate">Topic: {{ box.topic }}</span>
+        <span class="text-sky-400 hover:text-sky-300 font-semibold flex items-center gap-1">
+          Details <span>&rarr;</span>
+        </span>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <!-- Image Modal -->
+  <div id="image-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden" onclick="closeImageModal()">
+    <div class="relative max-w-4xl max-h-[90vh] bg-slate-900 border border-slate-800 rounded-xl p-2 shadow-2xl" onclick="event.stopPropagation()">
+      <button onclick="closeImageModal()" class="absolute -top-3 -right-3 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-full w-8 h-8 flex items-center justify-center border border-slate-700 text-sm font-bold shadow">✕</button>
+      <img id="modal-img" src="" alt="Graph Vorschau" class="max-h-[85vh] w-auto rounded-lg object-contain">
+    </div>
+  </div>
+
+  <div id="toast" class="fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2.5 rounded-lg text-xs font-semibold shadow-xl border transition-opacity duration-200 opacity-0 pointer-events-none z-50"></div>
+
+  <script>
+    window.INITIAL_BOX_ID = "{{ boxes[0].id if boxes else '' }}";
+    window.CHANNEL_COUNTS = {
+      {% for box in boxes %}
+      "{{ box.id }}": {{ box.channel_count or 0 }}{% if not loop.last %},{% endif %}
+      {% endfor %}
+    };
+    window.I18N = {{ translations_json | tojson }};
+  </script>
+  <script src="{{ url_for('static', filename='js/main.js') }}?v=1.8.2"></script>
+</body>
+</html>

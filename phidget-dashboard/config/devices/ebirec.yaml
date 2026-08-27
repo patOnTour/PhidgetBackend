@@ -1,0 +1,34 @@
+ebirec:
+  name: Ebirec
+  box_label: Ebirec
+  channel_count: 8
+  device_id: ebirec
+  serial: 802558
+  ntfy_channel: Ebirec
+  timezone: Europe/Zurich
+  ip_lan: 10.161.20.154
+  mac_lan: 00:1b:0b:10:42:d1
+  mac_wlan: e8:4e:06:9c:ce:89
+  workstation: Pädi
+  probe_detection:
+    delta_t_min: 0.8
+    slope_min: 0.015
+    rot_peak_min: 0.035
+  turnaround_detection:
+    sg_window: 31
+    cooling_slope_min: -0.0003
+    reheating_slope_min: 0.0003
+    min_cooling_delta: 0.2
+  channel_labels:
+    temp0: Kanal 1
+    temp1: Kanal 2
+    temp2: Kanal 3
+    temp3: Kanal 4
+    temp4: Kanal 5
+    temp5: Kanal 6
+    temp6: Kanal 7
+    temp7: Kanal 8
+  auto_detection_enabled: false
+  turnaround_detection_enabled: false
+  channel_recording_enabled: false
+  ntfy_enabled: false

@@ -1,0 +1,18 @@
+Server:
+  timezone: Europe/Zurich
+  ntfy_server_url: https://ntfy.concretum-setting.com
+    params:
+      orgId: 1
+      from: now-1h
+      to: now
+      timezone: browser
+      refresh: 30s
+  probe_detection:
+    delta_t_min: 0.8
+    slope_min: 0.015
+    rot_peak_min: 0.035
+  turnaround_detection:
+    sg_window: 31
+    cooling_slope_min: -0.0003
+    reheating_slope_min: 0.0003
+    min_cooling_delta: 0.2
