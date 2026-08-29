@@ -36,3 +36,8 @@ Thumbs.db
 .vscode/
 .idea/.ssh-keys/
 id_ed25519*
+
+# SSH Keys & Secrets
+.ssh-keys/
+*.id_*
+*.env
