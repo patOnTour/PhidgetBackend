@@ -1,8 +1,8 @@
 """
-@file: history.py
-@version: 1.0.0
-@date: 2026-08-27
-@description: History Blueprint fuer Concretum Dashboard.
+@file: routes/history.py
+@version: 1.1.0
+@date: 2026-08-29
+@description: History Blueprint fuer Concretum Dashboard mit zentralisiertem ConfigManager.
               Ermoeglicht Abfrage historischer Messreihen, Peak-Events und dynamischen CSV-Export.
 @author: Patrick Staehli
 """
@@ -14,6 +14,8 @@ from psycopg2.extras import RealDictCursor
 from datetime import datetime, timezone
 import zoneinfo
 from flask import Blueprint, render_template, request, jsonify, Response, current_app
+
+from core.config_manager import config_manager
 
 history_bp = Blueprint("history", __name__, url_prefix="/history")
 
@@ -36,8 +38,8 @@ def get_db_connection():
 
 @history_bp.route("/")
 def history_page():
-    from app import get_parsed_config, ALL_TIMEZONES
-    cfg = get_parsed_config()
+    from app import ALL_TIMEZONES
+    cfg = config_manager.get_parsed_config()
     return render_template(
         "history.html",
         boxes=cfg["boxes"],
@@ -61,9 +63,8 @@ def get_history_data():
     if not conn:
         return jsonify({"series": [], "events": []}), 500
 
-    from app import load_yaml_raw
-    raw_yaml = load_yaml_raw()
-    server_tz_name = raw_yaml.get("Server", {}).get("timezone", "Europe/Zurich")
+    server_cfg = config_manager.get_server_config()
+    server_tz_name = server_cfg.get("timezone", "Europe/Zurich")
     try:
         target_tz = zoneinfo.ZoneInfo(server_tz_name)
     except Exception:
@@ -137,19 +138,21 @@ def export_history_csv():
     if not conn:
         return Response("Keine Datenbankverbindung", status=500)
 
-    from app import load_yaml_raw
-    raw_yaml = load_yaml_raw()
-    server_tz_name = raw_yaml.get("Server", {}).get("timezone", "Europe/Zurich")
+    server_cfg = config_manager.get_server_config()
+    server_tz_name = server_cfg.get("timezone", "Europe/Zurich")
     try:
         target_tz = zoneinfo.ZoneInfo(server_tz_name)
     except Exception:
         target_tz = zoneinfo.ZoneInfo("Europe/Zurich")
 
+    dev_map = config_manager.get_device_map()
+
     # Mapping fuer lesbare Spalten-Header erstellen
     headers = ["Zeitpunkt (Lokal)"]
     col_keys = []
     for d_id in device_ids:
-        box_data = next((v for k, v in raw_yaml.items() if k != "Server" and isinstance(v, dict) and (v.get("device_id", "").lower() == d_id.lower() or k.lower() == d_id.lower())), {})
+        meta = dev_map.get(str(d_id).strip().lower(), {})
+        box_data = meta.get("data", {})
         box_name = box_data.get("name", d_id)
         custom_labels = box_data.get("channel_labels", {})
         for ch in channels:
@@ -188,7 +191,12 @@ def export_history_csv():
         for t_str, vals in time_rows.items():
             row = [t_str]
             for col in col_keys:
-                row.append(str(vals.get(col, "")).replace(".", ","))
+                val = vals.get(col)
+                if val is not None and val != "":
+                    # Schweizer System: Dezimalpunkt mit 2 Nachkommastellen
+                    row.append(f"{float(val):.2f}")
+                else:
+                    row.append("")
             writer.writerow(row)
 
         output.seek(0)

@@ -1,6 +1,6 @@
 <!--
 @file: index.html
-@version: 1.8.2
+@version: 1.9.2
 @date: 2026-08-26
 @description: Dashboard-Hauptseite fuer die Koffer-Ueberwachung mit Entkopplung der Kanalnamen-Eingabe (Speichern-Button gegen Race Conditions) und automatischer Asset-Versionierung.
 @author: Patrick Stähli
@@ -14,6 +14,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=1.7.0">
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
 </head>
 <body class="p-3 sm:p-6 max-w-5xl mx-auto pb-24">
 
@@ -97,7 +98,7 @@
     <!-- Box-Ansichten -->
     <div class="space-y-6">
       {% for box in boxes %}
-      <div id="tab-content-{{ box.id }}" class="tab-content space-y-4 hidden">
+      <div id="tab-content-{{ box.id }}" class="tab-content space-y-4 {% if not loop.first %}hidden{% endif %}">
         
         <!-- Box Header mit Hardware Kippschaltern -->
         <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-wrap justify-between items-center gap-3">
@@ -168,6 +169,10 @@
           <button onclick="switchSubTab('{{ box.id }}', 'quick_table')" id="subtab-btn-{{ box.id }}-quick_table" 
                   class="subtab-btn-{{ box.id }} px-3 py-1.5 rounded-md text-xs font-semibold bg-slate-900 text-slate-400 border border-slate-800 hover:text-white transition">
             {{ t('box.subtab_quickview', '📊 Quickview (Telemetrie)') }}
+          </button>
+          <button onclick="switchSubTab('{{ box.id }}', 'meta')" id="subtab-btn-{{ box.id }}-meta" 
+                  class="subtab-btn-{{ box.id }} px-3 py-1.5 rounded-md text-xs font-semibold bg-slate-900 text-slate-400 border border-slate-800 hover:text-white transition">
+            {{ t('channel_meta.tab_title', '🧪 Kanal-Infos') }}
           </button>
         </div>
 
@@ -288,7 +293,80 @@
 
           </div>
         </div>
-
+        
+        <!-- TAB 3: KANAL-METADATEN (LABOR & FILEMAKER) -->
+        <div id="subtab-content-{{ box.id }}-meta" class="space-y-3 hidden">
+          <!-- Mobile Hinweis -->
+          <div class="block md:hidden bg-amber-950/40 border border-amber-800/60 rounded-xl p-4 text-xs font-mono text-amber-300">
+            ⚠️ {{ t('channel_meta.desktop_only_notice', 'Die Metadaten-Pflege ist für Desktop-Bildschirme optimiert.') }}
+          </div>
+          
+          <!-- Desktop Tabelle -->
+          <div class="hidden md:block bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-lg overflow-x-auto">
+            <table class="w-full text-left text-xs font-mono">
+              <thead class="border-b border-slate-800 text-slate-400">
+                <tr>
+                  <th class="py-2.5 px-2">{{ t('channel_meta.th_channel', 'Kanal') }}</th>
+                  <th class="py-2.5 px-2">{{ t('channel_meta.th_location', 'Messort') }}</th>
+                  <th class="py-2.5 px-2">{{ t('channel_meta.th_interface', 'Schnittstelle') }}</th>
+                  <th class="py-2.5 px-2">{{ t('channel_meta.th_custom', 'Eingabe') }}</th>
+                  <th class="py-2.5 px-2">{{ t('channel_meta.th_recipe', 'Rezept-ID') }}</th>
+                  <th class="py-2.5 px-2">{{ t('channel_meta.th_cement', 'Zement-Name') }}</th>
+                  <th class="py-2.5 px-2">{{ t('channel_meta.th_cement_id', 'Zement-ID') }}</th>
+                  <th class="py-2.5 px-2 text-right">{{ t('channel_meta.th_action', 'Aktion') }}</th>
+                </tr>
+              </thead>
+              <tbody id="meta-table-body-{{ box.id }}" class="divide-y divide-slate-800/60 text-slate-200">
+                {% for ch in box.channels %}
+                {% set ch_num = loop.index0 %}
+                <tr id="meta-row-{{ box.id }}-{{ ch_num }}">
+                  <td class="py-2 px-2 font-bold text-sky-400 whitespace-nowrap">{{ ch.label }} (temp{{ ch_num }})</td>
+                  <td class="py-2 px-1">
+                    <select id="meta-loc-{{ box.id }}-{{ ch_num }}" onchange="updateRecipeDropdown('{{ box.id }}', {{ ch_num }})" class="bg-slate-950 border border-slate-800 rounded p-1 text-slate-200 w-28">
+                      <option value="Extern">Extern</option>
+                      <option value="EbiLab">EbiLab</option>
+                      <option value="Ebirec">Ebirec</option>
+                    </select>
+                  </td>
+                  <td class="py-2 px-1">
+                    <select id="meta-iface-{{ box.id }}-{{ ch_num }}" onchange="updateRecipeDropdown('{{ box.id }}', {{ ch_num }})" class="bg-slate-950 border border-slate-800 rounded p-1 text-slate-200 w-28">
+                      <option value="Lieferschein">Lieferschein</option>
+                      <option value="BT11">BT11</option>
+                      <option value="LUCY">LUCY</option>
+                      <option value="ANA">ANA</option>
+                      <option value="IDA">IDA</option>
+                    </select>
+                  </td>
+                  <td class="py-2 px-1">
+                    <input type="text" id="meta-custom-{{ box.id }}-{{ ch_num }}" placeholder="Notiz..." class="bg-slate-950 border border-slate-800 rounded p-1 text-slate-200 w-32">
+                  </td>
+                  <td class="py-2 px-1">
+                    <select id="meta-recipe-{{ box.id }}-{{ ch_num }}" class="bg-slate-950 border border-slate-800 rounded p-1 text-slate-200 w-32">
+                      <option value="">-</option>
+                    </select>
+                  </td>
+                  <td class="py-2 px-1">
+                    <select id="meta-cname-{{ box.id }}-{{ ch_num }}" onchange="updateCementIdDropdown('{{ box.id }}', {{ ch_num }})" class="bg-slate-950 border border-slate-800 rounded p-1 text-slate-200 w-24">
+                      <option value="cem100">cem100</option>
+                      <option value="cem50">cem50</option>
+                    </select>
+                  </td>
+                  <td class="py-2 px-1">
+                    <select id="meta-cid-{{ box.id }}-{{ ch_num }}" class="bg-slate-950 border border-slate-800 rounded p-1 text-slate-200 w-32">
+                      <option value="">-</option>
+                    </select>
+                  </td>
+                  <td class="py-2 px-1 text-right">
+                    <button onclick="saveChannelMeta('{{ box.id }}', {{ ch_num }}, this)" class="bg-emerald-700 hover:bg-emerald-600 active:bg-emerald-800 text-white px-3 py-1 rounded font-bold transition">
+                      {{ t('channel_meta.save_btn', 'Speichern') }}
+                    </button>
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
       {% endfor %}
     </div>
@@ -364,6 +442,6 @@
     };
     window.I18N = {{ translations_json | tojson }};
   </script>
-  <script src="{{ url_for('static', filename='js/main.js') }}?v=1.8.2"></script>
+  <script src="{{ url_for('static', filename='js/main.js') }}?v=1.9.2"></script>
 </body>
 </html>

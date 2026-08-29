@@ -19,6 +19,15 @@ dummy:
     cooling_slope_min: -0.0003
     reheating_slope_min: 0.0003
     min_cooling_delta: 0.15
+  setting_detection:
+    sg_window: 21
+    poly_order: 2
+    lookback_sec: 300
+    min_samples: 15
+    accel_min: 1.5e-06
+    slope_min: 0.002
+    fallback_samples: 5
+    fallback_step_min: 0.02
   channel_labels:
     temp0: Dummy 1
     temp1: Dummy 2
@@ -28,8 +37,8 @@ dummy:
     temp5: Kanal 6
     temp6: Kanal 7
     temp7: Kanal 8
-  auto_detection_enabled: false
-  turnaround_detection_enabled: false
-  channel_recording_enabled: false
-  ntfy_enabled: false
+  auto_detection_enabled: true
+  turnaround_detection_enabled: true
+  channel_recording_enabled: true
+  ntfy_enabled: true
   auto_reset_after_30m: true

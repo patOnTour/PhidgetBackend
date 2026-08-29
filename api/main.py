@@ -1,8 +1,8 @@
 """
 @file: main.py
-@version: 1.2.0
-@date: 2026-08-27
-@description: Ingest-API mit timing-resistentem Token-Vergleich, bereinigtem CORS und modularer YAML-Unterstützung.
+@version: 1.3.0
+@date: 2026-08-29
+@description: Ingest-API ohne DDL-Startup-Logik (Schema as Code via db/init/01_schema.sql), timing-resistentem Token-Vergleich und modularer YAML-Unterstuetzung.
 @author: Patrick Staehli
 """
 
@@ -37,7 +37,6 @@ DB_PORT = int(os.getenv("DB_PORT", 5432))
 DB_NAME = os.getenv("DB_NAME", "telemetry_db")
 DB_USER = os.getenv("DB_USER", "postgres")
 
-# Kritische Secrets erzwingen
 DB_PASSWORD = os.getenv("DB_PASSWORD")
 if not DB_PASSWORD:
     raise RuntimeError("Umgebungsvariable DB_PASSWORD ist nicht gesetzt!")
@@ -67,9 +66,8 @@ def verify_token(authorization: Optional[str] = Header(None)):
     return token
 
 def is_channel_recording_allowed(device_id: str) -> bool:
-    """Prüft in den modularen YAMLs, ob das Logging für die Box aktiv ist."""
+    clean_id = str(device_id).strip().lower()
     try:
-        # 1. Direkte Datei dev_id.yaml prüfen
         direct_file = os.path.join(DEVICES_DIR, f"{device_id}.yaml")
         if os.path.exists(direct_file):
             with open(direct_file, "r", encoding="utf-8") as f:
@@ -78,14 +76,17 @@ def is_channel_recording_allowed(device_id: str) -> bool:
                     if isinstance(val, dict):
                         return bool(val.get("channel_recording_enabled", True))
 
-        # 2. Fallback: Alle YAMLs durchsuchen
         for fpath in glob.glob(os.path.join(DEVICES_DIR, "*.yaml")):
+            if os.path.basename(fpath).lower() == "server.yaml":
+                continue
             with open(fpath, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
+                if not isinstance(data, dict):
+                    continue
                 for k, val in data.items():
                     if k == "Server" or not isinstance(val, dict):
                         continue
-                    if str(val.get("device_id", "")).lower() == str(device_id).lower() or k.lower() == str(device_id).lower():
+                    if str(val.get("device_id", "")).strip().lower() == clean_id or k.strip().lower() == clean_id:
                         return bool(val.get("channel_recording_enabled", True))
     except Exception:
         pass
@@ -106,63 +107,11 @@ class StartChannelRequest(BaseModel):
     channel: int
 
 @app.on_event("startup")
-def init_db():
+def check_db_ready():
+    """Prueft nur die DB-Konnektivitaet beim Booten. Schemadefinition liegt exklusiv bei db/init/."""
     with get_db_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;")
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS telemetry_data (
-                    time TIMESTAMPTZ NOT NULL,
-                    device_id TEXT NOT NULL,
-                    channel INT NOT NULL,
-                    temperature DOUBLE PRECISION NOT NULL,
-                    job_id TEXT,
-                    PRIMARY KEY (time, device_id, channel)
-                );
-            """)
-            cur.execute("""
-                SELECT create_hypertable('telemetry_data', 'time', if_not_exists => TRUE);
-            """)
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS analyzer_state (
-                    device_id TEXT NOT NULL,
-                    channel INT NOT NULL,
-                    job_id TEXT NOT NULL,
-                    started_at TIMESTAMPTZ,
-                    turnaround_sent BOOLEAN DEFAULT FALSE,
-                    trigger_sent BOOLEAN DEFAULT FALSE,
-                    export_30_sent BOOLEAN DEFAULT FALSE,
-                    export_120_sent BOOLEAN DEFAULT FALSE,
-                    force_export BOOLEAN DEFAULT FALSE,
-                    t_min_temp DOUBLE PRECISION,
-                    t_min_time TIMESTAMPTZ,
-                    t_ab_temp DOUBLE PRECISION,
-                    t_ab_time TIMESTAMPTZ,
-                    last_evaluated TIMESTAMPTZ,
-                    PRIMARY KEY (device_id, channel, job_id)
-                );
-            """)
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS alerts_history (
-                    id SERIAL PRIMARY KEY,
-                    created_at TIMESTAMPTZ DEFAULT NOW(),
-                    device_id TEXT NOT NULL,
-                    channel INT NOT NULL,
-                    event_type TEXT NOT NULL,
-                    event_time TIMESTAMPTZ NOT NULL,
-                    title TEXT NOT NULL,
-                    message TEXT NOT NULL,
-                    acknowledged BOOLEAN DEFAULT FALSE
-                );
-            """)
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS device_status (
-                    device_id TEXT PRIMARY KEY,
-                    last_seen TIMESTAMPTZ NOT NULL,
-                    pending_count INT DEFAULT 0
-                );
-            """)
-            conn.commit()
+            cur.execute("SELECT 1;")
 
 @app.get("/api/v1/control/device-status/{device_id}", dependencies=[Depends(verify_token)])
 def get_device_measurement_status(device_id: str):

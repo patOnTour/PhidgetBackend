@@ -12,6 +12,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - /volume1/docker/telemetry/timescale_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
     ports:
       - "5433:5432"
     networks:
@@ -24,19 +25,26 @@ services:
           memory: 512M
 
   fastapi_ingest:
-    build: ./api
+    image: python:3.11-slim
     container_name: fastapi_ingest
     restart: unless-stopped
+    working_dir: /app
     environment:
-      DB_HOST: timescaledb
-      DB_PORT: 5432
-      DB_NAME: ${POSTGRES_DB}
-      DB_USER: ${POSTGRES_USER}
-      DB_PASSWORD: ${POSTGRES_PASSWORD}
-      API_TOKEN: ${API_TOKEN}
-      YAML_CONFIG_PATH: /app/config
+      - DB_HOST=timescaledb
+      - DB_PORT=5432
+      - DB_NAME=${POSTGRES_DB}
+      - DB_USER=${POSTGRES_USER}
+      - DB_PASSWORD=${POSTGRES_PASSWORD}
+      - API_TOKEN=${API_TOKEN}
+      - YAML_CONFIG_PATH=/app/config
+      - PIP_DISABLE_PIP_VERSION_CHECK=1
+      - PIP_ROOT_USER_ACTION=ignore
+      - PYTHONUNBUFFERED=1
     volumes:
+      - ./api:/app
       - ./phidget-dashboard/config:/app/config:ro
+    command: >
+      sh -c "pip install -q --no-cache-dir -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port 8000"
     ports:
       - "8000:8000"
     depends_on:
@@ -89,10 +97,13 @@ services:
       - YAML_CONFIG_PATH=/app/config
       - PIP_DISABLE_PIP_VERSION_CHECK=1
       - PIP_ROOT_USER_ACTION=ignore
+      - PYTHONPATH=/app:/app/analyzer_lib
+      - PYTHONUNBUFFERED=1
     volumes:
       - ./phidget-dashboard:/app
+      - ./analyzer:/app/analyzer_lib:ro
     command: >
-      sh -c "pip install -q --no-cache-dir flask requests psycopg2-binary pyyaml filelock && python app.py"
+      sh -c "pip install -q --no-cache-dir flask requests psycopg2-binary pyyaml numpy pandas matplotlib && python -u app.py"
     ports:
       - "8080:8080"
     depends_on:
@@ -103,7 +114,6 @@ services:
   server-analyzer:
     image: python:3.11-slim
     container_name: server_analyzer
-    mem_limit: 256m
     restart: unless-stopped
     working_dir: /app
     environment:
@@ -112,22 +122,22 @@ services:
       - DB_NAME=${POSTGRES_DB}
       - DB_USER=${POSTGRES_USER}
       - DB_PASS=${POSTGRES_PASSWORD}
+      - YAML_CONFIG_PATH=/app/config
       - NTFY_URL=http://ntfy:80
       - ARCHIVE_DIR=/app/archive
-      - YAML_CONFIG_PATH=/app/config
       - PIP_DISABLE_PIP_VERSION_CHECK=1
       - PIP_ROOT_USER_ACTION=ignore
+      - PYTHONUNBUFFERED=1
     volumes:
       - ./analyzer:/app
-      - ./phidget-dashboard/archive:/app/archive
-      - ./phidget-dashboard/config:/app/config
+      - ./phidget-dashboard/config:/app/config:ro
     command: >
-      sh -c "pip install -q --no-cache-dir psycopg2-binary requests numpy pandas matplotlib pyyaml && python server_analyzer.py"
+      sh -c "pip install -q --no-cache-dir psycopg2-binary pyyaml requests numpy pandas matplotlib && python -u server_analyzer.py"
     depends_on:
       - timescaledb
-      - ntfy
     networks:
       - telemetry_net
+
 
   probe-detector:
     image: python:3.11-slim

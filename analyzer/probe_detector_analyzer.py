@@ -1,14 +1,15 @@
 """
 @file: probe_detector_analyzer.py
-@version: 1.5.0
-@date: 2026-08-26
-@description: Analyzer für Sonden- und Signalerkennung mit integriertem Connection Pooling via psycopg2.pool.
+@version: 2.0.0
+@date: 2026-08-28
+@description: Analyzer für Sonden- und Signalerkennung mit modularen Geräte-YAMLs und integriertem Connection Pooling.
 @author: Patrick Stähli
 """
 
 import os
 import sys
 import time
+import glob
 import logging
 from datetime import datetime, timezone
 import yaml
@@ -26,7 +27,18 @@ DB_PORT = int(os.getenv("DB_PORT", 5432))
 DB_NAME = os.getenv("DB_NAME", "telemetry_db")
 DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASS = os.getenv("DB_PASS", "postgres")
-YAML_PATH = os.getenv("YAML_CONFIG_PATH", "/app/config/devices.yaml")
+
+CONFIG_PATH_ENV = os.getenv("YAML_CONFIG_PATH", "/app/config")
+if os.path.isfile(CONFIG_PATH_ENV):
+    DEVICES_DIR = os.path.join(os.path.dirname(CONFIG_PATH_ENV), "devices")
+else:
+    DEVICES_DIR = os.path.join(CONFIG_PATH_ENV, "devices")
+
+DEFAULT_PROBE_THRESHOLDS = {
+    "delta_t_min": 0.80,
+    "slope_min": 0.015,
+    "rot_peak_min": 0.035
+}
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] [PROBE_DETECTOR] %(message)s")
 logger = logging.getLogger("ProbeDetectorAnalyzer")
@@ -68,27 +80,57 @@ def release_db_connection(conn):
                 pass
 
 
-def load_yaml_config():
-    if not os.path.exists(YAML_PATH):
-        return {}
-    try:
-        with open(YAML_PATH, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f) or {}
-    except Exception as e:
-        logger.error(f"[YAML Load Error] {e}")
-        return {}
+def load_modular_yamls():
+    combined = {"Server": {}}
+    if not os.path.exists(DEVICES_DIR):
+        return combined
+
+    server_file = os.path.join(DEVICES_DIR, "Server.yaml")
+    if os.path.exists(server_file):
+        try:
+            with open(server_file, "r", encoding="utf-8") as f:
+                content = yaml.safe_load(f) or {}
+                combined["Server"] = content.get("Server", content)
+        except Exception as e:
+            logger.error(f"[YAML Load Error Server.yaml] {e}")
+
+    for file_path in glob.glob(os.path.join(DEVICES_DIR, "*.yaml")):
+        if os.path.basename(file_path).lower() == "server.yaml":
+            continue
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                dev_data = yaml.safe_load(f) or {}
+                if isinstance(dev_data, dict):
+                    combined.update(dev_data)
+        except Exception as e:
+            logger.error(f"[YAML Load Error {os.path.basename(file_path)}] {e}")
+
+    return combined
+
+
+def get_probe_thresholds(device_id: str, config: dict) -> dict:
+    server_cfg = config.get("Server", {})
+    th = dict(DEFAULT_PROBE_THRESHOLDS)
+    th.update(server_cfg.get("probe_detection", {}))
+
+    for k, val in config.items():
+        if k == "Server" or not isinstance(val, dict):
+            continue
+        if val.get("device_id", "").lower() == str(device_id).lower() or k.lower() == str(device_id).lower():
+            th.update(val.get("probe_detection", {}))
+            break
+    return th
 
 
 def run_probe_detector():
-    logger.info("Probe Detector Analyzer aktiv (Mit integriertem Connection Pooling)...")
+    logger.info("Probe Detector Analyzer aktiv (Modular YAMLs & Dynamic Thresholds)...")
     
     while True:
         conn = get_db_connection()
         try:
             conn.autocommit = True
-            config = load_yaml_config()
+            config = load_modular_yamls()
             
-            # Beispielhafte Verarbeitungslogik für Sonden-Erkennung / Auto-Detection
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
                     SELECT device_id, MAX(time) as last_time
@@ -100,8 +142,8 @@ def run_probe_detector():
                 
                 for dev in active_devices:
                     dev_id = dev["device_id"]
-                    # Hier greift die Logik zur Prüfung von Schwellwerten oder automatischer Erkennung
-                    # (Integrierbar je nach projektspezifischen Detektionsregeln)
+                    th = get_probe_thresholds(dev_id, config)
+                    # Hier greift die projektspezifische Schwellwert-Prüfung
                     
         except Exception as err:
             logger.error(f"Fehler im Probe Detector Loop: {err}")

@@ -108,7 +108,7 @@ class ConcreteAnalyzer:
 
         lookback_sec = int(th.get("lookback_sec", 300))
         mask_lookback = sec >= (sec[-1] - lookback_sec)
-        t_sub = sec[mask_lookblock if 'mask_lookblock' in locals() else mask_lookback]
+        t_sub = sec[mask_lookback]
         temp_sub = smooth[mask_lookback]
 
         if len(t_sub) >= 4:

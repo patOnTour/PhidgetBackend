@@ -151,4 +151,4 @@ dummy:
   channel_labels:
     temp0: Kanal 1
     temp1: Kanal 2
-  channel_recording_enabled: false
+  channel_recording_enabled: true

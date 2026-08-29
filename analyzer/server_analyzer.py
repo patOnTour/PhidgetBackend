@@ -1,15 +1,17 @@
 """
 @file: server_analyzer.py
-@version: 1.7.0
-@date: 2026-08-26
-@description: Backend-Dienst für Telemetrie-Überwachung, Offline-Erkennung, Abbinde-Auswertung und automatische Reports mit integriertem Connection Pooling.
-@author: Patrick Stähli
+@version: 2.3.1
+@date: 2026-08-28
+@description: Backend-Dienst fuer Telemetrie-Ueberwachung, Offline-Erkennung, Abbinde-Auswertung
+              und automatische Reports mit stabilem Connection-Pooling und YAML-Parametern.
+@author: Patrick Staehli
 """
 
 import os
 import sys
 import io
 import time
+import glob
 import base64
 import logging
 from datetime import datetime, timezone
@@ -20,7 +22,6 @@ from psycopg2.pool import SimpleConnectionPool
 from psycopg2.extras import RealDictCursor
 import requests
 
-# Sicherstellen, dass das aktuelle Verzeichnis im Python-Pfad liegt
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 if CURRENT_DIR not in sys.path:
     sys.path.append(CURRENT_DIR)
@@ -37,7 +38,13 @@ DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASS = os.getenv("DB_PASS", "postgres")
 NTFY_URL = os.getenv("NTFY_URL", "http://ntfy:80")
 ARCHIVE_DIR = os.getenv("ARCHIVE_DIR", "/app/archive")
-YAML_PATH = os.getenv("YAML_CONFIG_PATH", "/app/config/devices.yaml")
+
+CONFIG_PATH_ENV = os.getenv("YAML_CONFIG_PATH", "/app/config")
+if os.path.isfile(CONFIG_PATH_ENV):
+    DEVICES_DIR = os.path.join(os.path.dirname(CONFIG_PATH_ENV), "devices")
+else:
+    DEVICES_DIR = os.path.join(CONFIG_PATH_ENV, "devices")
+
 ADMIN_TOPIC = "Concretum"
 
 DEFAULT_TURNAROUND_THRESHOLDS = {
@@ -47,12 +54,23 @@ DEFAULT_TURNAROUND_THRESHOLDS = {
     "min_cooling_delta": 0.20
 }
 
+DEFAULT_SETTING_THRESHOLDS = {
+    "sg_window": 21,
+    "poly_order": 2,
+    "lookback_sec": 120,
+    "min_samples": 15,
+    "accel_min": 0.000010,     # 10 µ°C/s²
+    "slope_min": 0.0002,       # 0.0002 °C/s
+    "fallback_samples": 5,
+    "fallback_step_min": 0.015
+}
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] [ANALYZER] %(message)s")
 logger = logging.getLogger("ServerAnalyzer")
 
 offline_alert_state = {}
 
-# --- CONNECTION POOLING SETUP ---
+# --- CONNECTION POOLING ---
 db_pool = None
 
 def init_db_pool():
@@ -70,18 +88,28 @@ def init_db_pool():
     return db_pool
 
 def get_db_connection():
-    pool = init_db_pool()
+    global db_pool
     try:
-        return pool.getconn()
+        pool = init_db_pool()
+        conn = pool.getconn()
+        # Validitäts-Check
+        if conn.closed != 0:
+            pool.putconn(conn, close=True)
+            conn = pool.getconn()
+        return conn
     except Exception:
-        global db_pool
         db_pool = None
-        return init_db_pool().getconn()
+        pool = init_db_pool()
+        return pool.getconn()
 
 def release_db_connection(conn):
+    global db_pool
     if db_pool and conn:
         try:
-            db_pool.putconn(conn)
+            if conn.closed == 0:
+                db_pool.putconn(conn)
+            else:
+                db_pool.putconn(conn, close=True)
         except Exception:
             try:
                 conn.close()
@@ -89,8 +117,36 @@ def release_db_connection(conn):
                 pass
 
 
+def load_modular_yamls():
+    combined = {"Server": {}}
+    if not os.path.exists(DEVICES_DIR):
+        return combined
+
+    server_file = os.path.join(DEVICES_DIR, "Server.yaml")
+    if os.path.exists(server_file):
+        try:
+            with open(server_file, "r", encoding="utf-8") as f:
+                content = yaml.safe_load(f) or {}
+                combined["Server"] = content.get("Server", content)
+        except Exception as e:
+            logger.error(f"[YAML Load Error Server.yaml] {e}")
+
+    for file_path in glob.glob(os.path.join(DEVICES_DIR, "*.yaml")):
+        if os.path.basename(file_path).lower() == "server.yaml":
+            continue
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                dev_data = yaml.safe_load(f) or {}
+                if isinstance(dev_data, dict):
+                    combined.update(dev_data)
+        except Exception as e:
+            logger.error(f"[YAML Load Error {os.path.basename(file_path)}] {e}")
+
+    return combined
+
+
 def check_and_disable_box_logging(conn, box_id):
-    """Schaltet channel_recording_enabled auf False, wenn alle Kanäle der Box inaktiv oder FINISHED sind."""
+    """Schaltet channel_recording_enabled auf False, wenn alle Kanaele fertig sind."""
     try:
         with conn.cursor() as cur:
             cur.execute("""
@@ -99,16 +155,22 @@ def check_and_disable_box_logging(conn, box_id):
             """, (box_id,))
             active_count = cur.fetchone()[0]
 
-        if active_count == 0 and os.path.exists(YAML_PATH):
-            with open(YAML_PATH, "r", encoding="utf-8") as f:
-                cfg = yaml.safe_load(f) or {}
-            
-            target_key = next((k for k, v in cfg.items() if k != "Server" and isinstance(v, dict) and (v.get("device_id", "").lower() == str(box_id).lower() or k.lower() == str(box_id).lower())), None)
-            if target_key and cfg[target_key].get("channel_recording_enabled", True):
-                cfg[target_key]["channel_recording_enabled"] = False
-                with open(YAML_PATH, "w", encoding="utf-8") as f:
-                    yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
-                logger.info(f"[AUTO-HOUSEKEEPING] Alle Kanäle für {box_id} abgeschlossen. Kanal-Logging auf OFF gesetzt.")
+        if active_count == 0:
+            for file_path in glob.glob(os.path.join(DEVICES_DIR, "*.yaml")):
+                if os.path.basename(file_path).lower() == "server.yaml":
+                    continue
+                try:
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        cfg = yaml.safe_load(f) or {}
+                    target_key = next((k for k, v in cfg.items() if isinstance(v, dict) and (v.get("device_id", "").lower() == str(box_id).lower() or k.lower() == str(box_id).lower())), None)
+                    if target_key and cfg[target_key].get("channel_recording_enabled", True):
+                        cfg[target_key]["channel_recording_enabled"] = False
+                        with open(file_path, "w", encoding="utf-8") as f:
+                            yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+                        logger.info(f"[AUTO-HOUSEKEEPING] Alle Kanaele fuer {box_id} abgeschlossen. Logging deaktiviert.")
+                        break
+                except Exception:
+                    pass
     except Exception as ex:
         logger.error(f"[AUTO-HOUSEKEEPING ERR] {ex}")
 
@@ -149,53 +211,48 @@ def get_box_metadata(box_id, ch_num=0):
     turnaround_enabled = True
     ntfy_enabled = True
     turnaround_th = dict(DEFAULT_TURNAROUND_THRESHOLDS)
+    setting_th = dict(DEFAULT_SETTING_THRESHOLDS)
     auto_reset_30m = True
-    
-    if not os.path.exists(YAML_PATH):
-        return topic, box_name, fname, tz_name, turnaround_enabled, turnaround_th, ntfy_enabled, auto_reset_30m
-        
-    try:
-        with open(YAML_PATH, "r", encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
-            
-            server_cfg = cfg.get("Server", {})
-            tz_name = server_cfg.get("timezone", DEFAULT_TZ_NAME)
-            server_td = server_cfg.get("turnaround_detection", {})
-            for k in turnaround_th:
-                if k in server_td:
-                    turnaround_th[k] = server_td[k]
 
-            for k, val in cfg.items():
-                if k == "Server" or not isinstance(val, dict):
-                    continue
-                if val.get("device_id", "").lower() == str(box_id).lower() or k.lower() == str(box_id).lower():
-                    topic = val.get("ntfy_channel", ADMIN_TOPIC)
-                    box_name = val.get("name", box_id)
-                    tz_name = val.get("timezone", tz_name)
-                    turnaround_enabled = val.get("turnaround_detection_enabled", True)
-                    ntfy_enabled = val.get("ntfy_enabled", True)
-                    auto_reset_30m = val.get("auto_reset_after_30m", True)
-                    
-                    custom_labels = val.get("channel_labels", {})
-                    ch_key = f"temp{ch_num}"
-                    if ch_key in custom_labels and custom_labels[ch_key]:
-                        fname = custom_labels[ch_key]
-                        
-                    box_td = val.get("turnaround_detection", {})
-                    for th_k in turnaround_th:
-                        if th_k in box_td:
-                            turnaround_th[th_k] = box_td[th_k]
-                    break
-    except Exception as e:
-        logger.error(f"Fehler beim Laden von devices.yaml: {e}")
-        
-    return topic, box_name, fname, tz_name, turnaround_enabled, turnaround_th, ntfy_enabled, auto_reset_30m
+    cfg = load_modular_yamls()
+    server_cfg = cfg.get("Server", {})
+    tz_name = server_cfg.get("timezone", DEFAULT_TZ_NAME)
+
+    server_td = server_cfg.get("turnaround_detection", {})
+    turnaround_th.update(server_td)
+
+    server_sd = server_cfg.get("setting_detection", {})
+    setting_th.update(server_sd)
+
+    for k, val in cfg.items():
+        if k == "Server" or not isinstance(val, dict):
+            continue
+        if val.get("device_id", "").lower() == str(box_id).lower() or k.lower() == str(box_id).lower():
+            topic = val.get("ntfy_channel", ADMIN_TOPIC)
+            box_name = val.get("name", box_id)
+            tz_name = val.get("timezone", tz_name)
+            turnaround_enabled = val.get("turnaround_detection_enabled", True)
+            ntfy_enabled = val.get("ntfy_enabled", True)
+            auto_reset_30m = val.get("auto_reset_after_30m", True)
+
+            custom_labels = val.get("channel_labels", {})
+            ch_key = f"temp{ch_num}"
+            if ch_key in custom_labels and custom_labels[ch_key]:
+                fname = custom_labels[ch_key]
+
+            box_td = val.get("turnaround_detection", {})
+            turnaround_th.update(box_td)
+
+            box_sd = val.get("setting_detection", {})
+            setting_th.update(box_sd)
+            break
+
+    return topic, box_name, fname, tz_name, turnaround_enabled, turnaround_th, setting_th, ntfy_enabled, auto_reset_30m
 
 
 def send_ntfy(topic, message, title=None, priority=3, tags=None, attach_buf=None, filename=None):
     url = f"{NTFY_URL.rstrip('/')}/{topic}"
     headers = {"Priority": str(priority)}
-    
     if title:
         headers["Title"] = encode_rfc2047(title)
     if tags:
@@ -277,31 +334,26 @@ def check_heartbeats(conn):
 
                 if is_offline and not offline_alert_state.get(dev_id):
                     offline_alert_state[dev_id] = True
-                    topic, box_name, _, tz_name, _, _, ntfy_enabled, _ = get_box_metadata(dev_id, 0)
+                    topic, box_name, _, tz_name, _, _, _, ntfy_enabled, _ = get_box_metadata(dev_id, 0)
                     title = f"OFFLINE-ALARM: {box_name}"
-                    msg = f"Achtung: {box_name} ({dev_id}) liefert seit >60s keine Messwerte mehr an den Server, obwohl eine Messung läuft!"
-                    
+                    msg = f"Achtung: {box_name} ({dev_id}) liefert seit >60s keine Messwerte mehr an den Server, obwohl eine Messung laeuft!"
+
                     if ntfy_enabled:
                         send_ntfy("Admin", msg, title=title, priority=4, tags=["warning", "satellite_antenna"])
                         if topic and topic != "Admin":
                             send_ntfy(topic, msg, title=title, priority=4, tags=["warning", "satellite_antenna"])
-                    else:
-                        logger.info(f"[NTFY MUTED] Offline-Alarm für {dev_id} unterdrückt (ntfy_enabled = False).")
-                        
                     record_alert(conn, dev_id, 99, "HEARTBEAT_LOST", now, title, msg)
+
                 elif not is_offline and offline_alert_state.get(dev_id):
                     offline_alert_state[dev_id] = False
-                    topic, box_name, _, tz_name, _, _, ntfy_enabled, _ = get_box_metadata(dev_id, 0)
+                    topic, box_name, _, tz_name, _, _, _, ntfy_enabled, _ = get_box_metadata(dev_id, 0)
                     title = f"ONLINE: {box_name}"
                     msg = f"{box_name} ({dev_id}) liefert wieder Messwerte."
-                    
+
                     if ntfy_enabled:
                         send_ntfy("Admin", msg, title=title, priority=3, tags=["white_check_mark", "satellite_antenna"])
                         if topic and topic != "Admin":
                             send_ntfy(topic, msg, title=title, priority=3, tags=["white_check_mark", "satellite_antenna"])
-                    else:
-                        logger.info(f"[NTFY MUTED] Online-Meldung für {dev_id} unterdrückt (ntfy_enabled = False).")
-                        
                     record_alert(conn, dev_id, 99, "HEARTBEAT_RESTORED", now, title, msg)
     except Exception as e:
         logger.error(f"[HEARTBEAT ERR] {e}")
@@ -312,8 +364,9 @@ def process_active_streams():
     exporter = ExportGenerator()
 
     while True:
-        conn = get_db_connection()
+        conn = None
         try:
+            conn = get_db_connection()
             conn.autocommit = True
             check_heartbeats(conn)
 
@@ -328,17 +381,19 @@ def process_active_streams():
                 """)
                 active_runs = cur.fetchall()
 
-                if not active_runs:
-                    release_db_connection(conn)
-                    time.sleep(10)
-                    continue
+            if not active_runs:
+                release_db_connection(conn)
+                conn = None
+                time.sleep(10)
+                continue
 
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 for state in active_runs:
                     dev = state["device_id"]
                     ch = state["channel"]
                     started_at = state["started_at"]
                     t_ab_temp_stored = state.get("t_ab_temp")
-                    topic, box_name, fname, tz_name, td_enabled, td_th, ntfy_enabled, auto_reset_30m = get_box_metadata(dev, ch)
+                    topic, box_name, fname, tz_name, td_enabled, td_th, sd_th, ntfy_enabled, auto_reset_30m = get_box_metadata(dev, ch)
                     display_name = f"{box_name} - {fname}"
 
                     cur.execute("""
@@ -367,7 +422,7 @@ def process_active_streams():
 
                     # 1. Sofort-Export (EXP)
                     if state.get("force_export"):
-                        logger.info(f"[EXP] Manueller Export für {display_name}...")
+                        logger.info(f"[EXP] Manueller Export fuer {display_name}...")
                         buf, t_ab_calc, temp_ab_calc = exporter.generate_plot(times, temps, ambs, display_name, tz_str=tz_name)
                         cur_trig_temp = t_ab_temp_stored if t_ab_temp_stored is not None else temp_ab_calc
                         csv_bytes = exporter.generate_csv(times, temps, ambs, display_name, tz_str=tz_name, t_ab_dt=state.get("t_ab_time"), t_ab_temp=cur_trig_temp)
@@ -380,18 +435,19 @@ def process_active_streams():
                         save_to_archive(dev, file_tag, buf, csv_bytes)
 
                         title = f"Export: {display_name}"
-                        msg = f"Manueller Export für {display_name} (Aktuell: {temps[-1]:.2f} °C)."
+                        msg = f"Manueller Export fuer {display_name} (Aktuell: {temps[-1]:.2f} °C)."
                         if ntfy_enabled:
                             send_ntfy(topic, msg, title=title, priority=3, tags=["bar_chart"], attach_buf=buf, filename=f"manual_{box_name}_{fname}.png")
                         record_alert(conn, dev, ch, "MANUAL_EXPORT", datetime.now(timezone.utc), title, msg)
 
                         cur.execute("UPDATE analyzer_state SET force_export = FALSE WHERE device_id = %s AND channel = %s;", (dev, ch))
 
+                    # 3-Minuten-Sperrzeit nach Start
                     now_utc = datetime.now(started_at.tzinfo or timezone.utc)
                     if (now_utc - started_at).total_seconds() < 180:
                         continue
 
-                    # 2. Turnaround
+                    # 2. Turnaround / Wendepunkt
                     if not state["turnaround_sent"] and td_enabled:
                         is_turn, t_min, c_delta, r_delta = detector.check_turnaround(temps, thresholds=td_th)
                         if is_turn:
@@ -404,14 +460,14 @@ def process_active_streams():
 
                             t_str = to_local_str(now_turn, tz_name)
                             title = f"Info: Wendepunkt {display_name}"
-                            msg = f"Tiefstwert um {t_str} bei {t_min:.2f} °C durchschritten (Abkühlung: {c_delta:.2f} °C, Anstieg: +{r_delta:.2f} °C)."
+                            msg = f"Tiefstwert um {t_str} bei {t_min:.2f} °C durchschritten (Abkuehlung: {c_delta:.2f} °C, Anstieg: +{r_delta:.2f} °C)."
                             if ntfy_enabled:
                                 send_ntfy(topic, msg, title=title, priority=3, tags=["chart_with_downwards_trend", "arrow_up"])
                             record_alert(conn, dev, ch, "TURNAROUND", now_turn, title, msg)
 
-                    # 3. Abbindebeginn Trigger
-                    if not state["trigger_sent"]:
-                        trig_type, accel, slope = detector.evaluate_triggers(times, temps)
+                    # 3. Abbindebeginn Trigger (Erfordert erkannten Turnaround)
+                    if state.get("turnaround_sent") and not state["trigger_sent"]:
+                        trig_type, accel, slope = detector.evaluate_triggers(times, temps, thresholds=sd_th)
                         if trig_type:
                             buf, t_ab_dt, temp_ab = exporter.generate_plot(times, temps, ambs, display_name, tz_str=tz_name)
                             t_event = t_ab_dt if t_ab_dt else datetime.now(timezone.utc)
@@ -454,7 +510,7 @@ def process_active_streams():
 
                             if auto_reset_30m:
                                 cur.execute("DELETE FROM analyzer_state WHERE device_id = %s AND channel = %s;", (dev, ch))
-                                logger.info(f"[AUTO-RESET 30M] Kanal {ch} für {dev} nach 30m-Report auf RESET gesetzt.")
+                                logger.info(f"[AUTO-RESET 30M] Kanal {ch} fuer {dev} nach 30m-Report zurueckgesetzt.")
                                 check_and_disable_box_logging(conn, dev)
                                 continue
                             else:
@@ -481,11 +537,12 @@ def process_active_streams():
         except Exception as err:
             logger.error(f"Fehler im Analyzer-Loop: {err}")
         finally:
-            release_db_connection(conn)
+            if conn:
+                release_db_connection(conn)
 
         time.sleep(5)
 
 
 if __name__ == "__main__":
-    logger.info("Server Analyzer aktiv (Mit integriertem Connection Pooling via psycopg2.pool)...")
+    logger.info("Server Analyzer aktiv (Modular YAMLs & Dynamic Thresholds)...")
     process_active_streams()

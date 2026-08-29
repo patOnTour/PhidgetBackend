@@ -19,6 +19,15 @@ ebirec:
     cooling_slope_min: -0.0003
     reheating_slope_min: 0.0003
     min_cooling_delta: 0.2
+  setting_detection:
+    sg_window: 25
+    poly_order: 2
+    lookback_sec: 120
+    min_samples: 30
+    accel_min: 0.0000025
+    slope_min: 0.0005
+    fallback_samples: 10
+    fallback_step_min: 0.02
   channel_labels:
     temp0: Kanal 1
     temp1: Kanal 2

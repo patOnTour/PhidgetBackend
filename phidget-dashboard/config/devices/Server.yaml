@@ -1,6 +1,10 @@
 Server:
   timezone: Europe/Zurich
   ntfy_server_url: https://ntfy.concretum-setting.com
+  grafana:
+    server_url: https://grafana.concretum-setting.com
+    uid: paskgph
+    slug: temperatur
     params:
       orgId: 1
       from: now-1h
@@ -16,3 +20,34 @@ Server:
     cooling_slope_min: -0.0003
     reheating_slope_min: 0.0003
     min_cooling_delta: 0.2
+  setting_detection:
+    sg_window: 25
+    poly_order: 2
+    lookback_sec: 120
+    min_samples: 30
+    accel_min: 0.0000025
+    slope_min: 0.0005
+    fallback_samples: 10
+    fallback_step_min: 0.02
+  metadata_options:
+    locations:
+      - "Extern"
+      - "EbiLab"
+      - "Ebirec"
+    interfaces:
+      - "Lieferschein"
+      - "BT11"
+      - "LUCY"
+      - "ANA"
+      - "IDA"
+    cement_names:
+      - "cem100"
+      - "cem50"
+    recipes:
+      Extern_Lieferschein: ["R-EXT-01", "R-EXT-02"]
+      EbiLab_BT11: ["BT11-LAB-A", "BT11-LAB-B"]
+      Ebirec_LUCY: ["LUCY-REC-10", "LUCY-REC-20"]
+      EbiLab_LUCY: ["LUCY-EBI-01", "LUCY-EBI-02"]
+    cement_ids:
+      cem100: ["CEM100-Norm", "CEM100-Premium"]
+      cem50: ["CEM50-Standard", "CEM50-Eco"]

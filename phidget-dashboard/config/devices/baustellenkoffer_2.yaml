@@ -19,6 +19,15 @@ baustellenkoffer_2:
     cooling_slope_min: -0.0003
     reheating_slope_min: 0.0003
     min_cooling_delta: 0.2
+  setting_detection:
+    sg_window: 21
+    poly_order: 2
+    lookback_sec: 300
+    min_samples: 15
+    accel_min: 1.5e-06
+    slope_min: 0.002
+    fallback_samples: 5
+    fallback_step_min: 0.02
   channel_labels:
     temp0: BW LKW1
     temp1: LKW1
@@ -26,5 +35,5 @@ baustellenkoffer_2:
     temp3: LKW3
   auto_detection_enabled: false
   turnaround_detection_enabled: false
-  channel_recording_enabled: false
+  channel_recording_enabled: true
   ntfy_enabled: false

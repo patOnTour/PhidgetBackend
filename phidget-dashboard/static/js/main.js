@@ -1,15 +1,17 @@
 /**
  * @file: main.js
- * @version: v=1.8.2
- * @date: 2026-08-24
- * @description: Frontend-Steuerung fuer das Telemetrie-Dashboard. Beinhaltet individuelle Ntfy-Alarm-Steuerung (DEV-08), dynamische Lokalisierung, unterbrechungsfreie 20s-Auto-Aktualisierung des Telemetrie-Widgets (DEV-06) und Sprachumschaltung.
- * @author: Patrick Staehli
+ * @version: 1.9.2
+ * @date: 2026-08-29
+ * @description: Frontend-Steuerung für das Telemetrie-Dashboard mit flexibler Unterstützung
+ *               für 4 bis 8 Kanäle im Quickview (Graph mit 2 Dezimalstellen, Tabelle mit 1 Dezimalstelle ohne °C).
+ * @author: Patrick Stähli
  */
 
 let activeBoxId = localStorage.getItem('concretum_active_box') || window.INITIAL_BOX_ID || '';
 let activeSubTab = "control";
 let currentDashboardMode = "tabs";
 let liveCacheData = {};
+let metaOptionsCache = null;
 const channelCounts = window.CHANNEL_COUNTS || {};
 const widgetState = {};
 
@@ -49,7 +51,6 @@ function formatAlertText(boxName, boxId, title, message) {
   const rawMsg = message || '';
   const fullText = `${title || ''} ${rawMsg}`.toLowerCase();
 
-  // 1. Offline-Alarm
   if (fullText.includes('offline') || fullText.includes('keine messwerte') || fullText.includes('has not sent telemetry') || fullText.includes('no envía')) {
     const tmplTitle = t('alarms.events.offline_title', 'OFFLINE-ALARM');
     let bName = boxName;
@@ -70,7 +71,6 @@ function formatAlertText(boxName, boxId, title, message) {
     return { title: `⚠️ ${tmplTitle}`, message: tmplMsg };
   }
 
-  // 2. Einstich-Erkennung
   if (fullText.includes('einstich') || fullText.includes('probe insertion') || fullText.includes('inserción')) {
     const chMatch = rawMsg.match(/kanal\s*(\d+)|channel\s*(\d+)|canal\s*(\d+)/i);
     const chNum = chMatch ? (chMatch[1] || chMatch[2] || chMatch[3]) : '1';
@@ -82,7 +82,6 @@ function formatAlertText(boxName, boxId, title, message) {
     return { title: tmplTitle, message: tmplMsg };
   }
 
-  // 3. Wendepunkt
   if (fullText.includes('wendepunkt') || fullText.includes('turnaround') || fullText.includes('inflexión')) {
     const chMatch = rawMsg.match(/kanal\s*(\d+)|channel\s*(\d+)|canal\s*(\d+)/i);
     const chNum = chMatch ? (chMatch[1] || chMatch[2] || chMatch[3]) : '1';
@@ -94,7 +93,6 @@ function formatAlertText(boxName, boxId, title, message) {
     return { title: tmplTitle, message: tmplMsg };
   }
 
-  // 4. Trigger-Temperatur
   if (fullText.includes('trigger') || fullText.includes('disparo')) {
     const chMatch = rawMsg.match(/kanal\s*(\d+)|channel\s*(\d+)|canal\s*(\d+)/i);
     const chNum = chMatch ? (chMatch[1] || chMatch[2] || chMatch[3]) : '1';
@@ -109,7 +107,6 @@ function formatAlertText(boxName, boxId, title, message) {
     return { title: tmplTitle, message: tmplMsg };
   }
 
-  // 5. Export abgeschlossen
   if (fullText.includes('export') || fullText.includes('abgeschlossen') || fullText.includes('completed') || fullText.includes('completada')) {
     const chMatch = rawMsg.match(/kanal\s*(\d+)|channel\s*(\d+)|canal\s*(\d+)/i);
     const chNum = chMatch ? (chMatch[1] || chMatch[2] || chMatch[3]) : '1';
@@ -152,10 +149,17 @@ function openBoxTab(boxId) {
 
 function initWidgetState(boxId) {
   if (!widgetState[boxId]) {
+    const count = parseInt(channelCounts[boxId] || 4);
+    const initialChannels = [];
+    for (let i = 0; i < count; i++) {
+      initialChannels.push(i);
+    }
+    initialChannels.push(100); // Umgebung
+
     widgetState[boxId] = {
       range: 15,
       view: 'chart',
-      selectedChannels: new Set([0, 1, 2, 3, 100]),
+      selectedChannels: new Set(initialChannels),
       chart: null
     };
   }
@@ -233,14 +237,21 @@ async function loadWidgetData(boxId) {
     const resData = await res.json();
     const rows = resData.series || [];
 
+    // Sortierte Kanalliste für konsistente Spalten- und Dataset-Reihenfolge
+    const sortedChannels = Array.from(state.selectedChannels).sort((a, b) => {
+      if (a === 100) return 1;
+      if (b === 100) return -1;
+      return a - b;
+    });
+
     if (state.view === 'table') {
       const thead = document.getElementById(`widget-table-head-${boxId}`);
       const tbody = document.getElementById(`widget-table-body-${boxId}`);
 
       if (thead) {
         let thHtml = `<th class="py-2 px-2">${t('widget.time_col', 'Uhrzeit')}</th>`;
-        state.selectedChannels.forEach(ch => {
-          thHtml += `<th class="py-2 px-2">${getChannelLabel(boxId, ch)}</th>`;
+        sortedChannels.forEach(ch => {
+          thHtml += `<th class="py-2 px-2 whitespace-nowrap">${getChannelLabel(boxId, ch)}</th>`;
         });
         thead.innerHTML = thHtml;
       }
@@ -250,10 +261,11 @@ async function loadWidgetData(boxId) {
           tbody.innerHTML = `<tr><td class="py-4 text-center text-slate-500 italic">${t('widget.no_data', 'Keine Daten im gewählten Zeitraum')}</td></tr>`;
         } else {
           tbody.innerHTML = rows.slice().reverse().map(r => {
-            let cols = `<td class="py-1.5 px-2 text-slate-400">${r.time}</td>`;
-            state.selectedChannels.forEach(ch => {
+            let cols = `<td class="py-1.5 px-2 text-slate-400 whitespace-nowrap">${r.time}</td>`;
+            sortedChannels.forEach(ch => {
               const val = r[`ch_${ch}`];
-              cols += `<td class="py-1.5 px-2">${val != null ? Number(val).toFixed(1) : '--'}</td>`;
+              // Optimiert für Mobile: 1 Nachkommastelle, ohne °C
+              cols += `<td class="py-1.5 px-2 font-mono">${val != null ? Number(val).toFixed(1) : '--'}</td>`;
             });
             return `<tr class="border-b border-slate-800/40">${cols}</tr>`;
           }).join('');
@@ -265,7 +277,7 @@ async function loadWidgetData(boxId) {
       const labels = rows.map(r => r.time);
       const datasets = [];
 
-      Array.from(state.selectedChannels).forEach((ch) => {
+      sortedChannels.forEach((ch) => {
         const label = getChannelLabel(boxId, ch);
         datasets.push({
           label: label,
@@ -295,9 +307,25 @@ async function loadWidgetData(boxId) {
               animation: false,
               scales: {
                 x: { ticks: { color: '#64748b', maxTicksLimit: 10 }, grid: { color: '#1e293b' } },
-                y: { ticks: { color: '#64748b' }, grid: { color: '#1e293b' } }
+                y: { 
+                  ticks: { 
+                    color: '#64748b',
+                    callback: function(value) {
+                      return Number(value).toFixed(2);
+                    }
+                  }, 
+                  grid: { color: '#1e293b' } 
+                }
               },
               plugins: {
+                tooltip: {
+                  callbacks: {
+                    label: function(context) {
+                      const val = context.parsed.y;
+                      return `${context.dataset.label}: ${val != null ? Number(val).toFixed(2) + ' °C' : '--'}`;
+                    }
+                  }
+                },
                 legend: {
                   display: true,
                   position: 'top',
@@ -322,30 +350,27 @@ async function loadWidgetData(boxId) {
 }
 
 // ==============================================================================
-// TAB PERSISTENZ & SWITCHING (Fix gegen Zurückspringen)
+// TAB PERSISTENZ & SWITCHING
 // ==============================================================================
 
-// Aktive Box global vorhalten (Default aus localStorage oder Server-Init)
 window.ACTIVE_BOX_ID = localStorage.getItem('concretum_active_box') || window.INITIAL_BOX_ID || '';
 
 function switchTab(boxId) {
   if (!boxId) return;
   
   window.ACTIVE_BOX_ID = boxId;
+  activeBoxId = boxId;
   localStorage.setItem('concretum_active_box', boxId);
 
-  // 1. Alle Tab-Inhalte ausblenden
   document.querySelectorAll('.tab-content').forEach(el => {
     el.classList.add('hidden');
   });
 
-  // 2. Alle Tab-Buttons in den inaktiven Zustand versetzen
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.classList.remove('bg-slate-800', 'text-white');
     btn.classList.add('bg-slate-900', 'text-slate-400');
   });
 
-  // 3. Gewählten Koffer aktivieren
   const targetContent = document.getElementById(`tab-content-${boxId}`);
   const targetBtn = document.getElementById(`tab-btn-${boxId}`);
 
@@ -357,32 +382,19 @@ function switchTab(boxId) {
     targetBtn.classList.remove('bg-slate-900', 'text-slate-400');
   }
 
-  // Archiv und Quickview für die gewählte Box nachladen
   if (typeof loadArchiveFiles === 'function') {
     loadArchiveFiles(boxId);
   }
-  if (typeof loadWidgetData === 'function' && typeof activeSubTab !== 'undefined' && activeSubTab === 'quick_table') {
+  if (activeSubTab === 'quick_table') {
     loadWidgetData(boxId);
+  } else if (activeSubTab === 'meta') {
+    loadChannelMetadata(boxId);
   }
 }
-
-// Initialer Aufruf direkt beim Parsen und beim DOMContentLoaded
-function initSavedTab() {
-  const savedBox = localStorage.getItem('concretum_active_box');
-  const availableTarget = savedBox && document.getElementById(`tab-content-${savedBox}`) ? savedBox : window.INITIAL_BOX_ID;
-  
-  if (availableTarget) {
-    switchTab(availableTarget);
-  }
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-  initSavedTab();
-});
 
 function switchSubTab(boxId, tabKey) {
   activeSubTab = tabKey;
-  ['control', 'quick_table'].forEach(k => {
+  ['control', 'quick_table', 'meta'].forEach(k => {
     const content = document.getElementById(`subtab-content-${boxId}-${k}`);
     const btn = document.getElementById(`subtab-btn-${boxId}-${k}`);
     if (content) content.classList.add('hidden');
@@ -402,6 +414,131 @@ function switchSubTab(boxId, tabKey) {
 
   if (tabKey === 'quick_table') {
     loadWidgetData(boxId);
+  } else if (tabKey === 'meta') {
+    loadChannelMetadata(boxId);
+  }
+}
+
+// ==========================================
+// KANAL-METADATEN (LABOR & FILEMAKER)
+// ==========================================
+
+async function loadMetaOptions() {
+  if (metaOptionsCache) return metaOptionsCache;
+  try {
+    const res = await fetch('/api/metadata/options');
+    metaOptionsCache = await res.json();
+    return metaOptionsCache;
+  } catch (e) {
+    console.error("Meta Options Error", e);
+    return null;
+  }
+}
+
+async function updateRecipeDropdown(boxId, chNum) {
+  const opts = await loadMetaOptions();
+  if (!opts) return;
+
+  const locEl = document.getElementById(`meta-loc-${boxId}-${chNum}`);
+  const ifaceEl = document.getElementById(`meta-iface-${boxId}-${chNum}`);
+  const recipeSelect = document.getElementById(`meta-recipe-${boxId}-${chNum}`);
+  
+  if (!locEl || !ifaceEl || !recipeSelect) return;
+
+  const loc = locEl.value;
+  const iface = ifaceEl.value;
+  const key = `${loc}_${iface}`;
+  const recipes = (opts.recipes && opts.recipes[key]) ? opts.recipes[key] : [];
+
+  recipeSelect.innerHTML = recipes.length 
+    ? recipes.map(r => `<option value="${r}">${r}</option>`).join('') 
+    : `<option value="">-</option>`;
+}
+
+async function updateCementIdDropdown(boxId, chNum) {
+  const opts = await loadMetaOptions();
+  if (!opts) return;
+
+  const cnameEl = document.getElementById(`meta-cname-${boxId}-${chNum}`);
+  const cidSelect = document.getElementById(`meta-cid-${boxId}-${chNum}`);
+  
+  if (!cnameEl || !cidSelect) return;
+
+  const cname = cnameEl.value;
+  const ids = (opts.cement_ids && opts.cement_ids[cname]) ? opts.cement_ids[cname] : [];
+  
+  cidSelect.innerHTML = ids.length 
+    ? ids.map(id => `<option value="${id}">${id}</option>`).join('') 
+    : `<option value="">-</option>`;
+}
+
+async function loadChannelMetadata(boxId) {
+  await loadMetaOptions();
+  const chCount = channelCounts[boxId] || 4;
+
+  for (let ch = 0; ch < chCount; ch++) {
+    await updateRecipeDropdown(boxId, ch);
+    await updateCementIdDropdown(boxId, ch);
+  }
+
+  try {
+    const res = await fetch(`/api/metadata/get/${boxId}`);
+    const data = await res.json();
+    if (data.success && data.metadata) {
+      for (const [ch, m] of Object.entries(data.metadata)) {
+        const elLoc = document.getElementById(`meta-loc-${boxId}-${ch}`);
+        const elIface = document.getElementById(`meta-iface-${boxId}-${ch}`);
+        const elCustom = document.getElementById(`meta-custom-${boxId}-${ch}`);
+        const elRecipe = document.getElementById(`meta-recipe-${boxId}-${ch}`);
+        const elCname = document.getElementById(`meta-cname-${boxId}-${ch}`);
+        const elCid = document.getElementById(`meta-cid-${boxId}-${ch}`);
+
+        if (elLoc && m.location) elLoc.value = m.location;
+        if (elIface && m.interface) elIface.value = m.interface;
+        if (elCustom) elCustom.value = m.custom_string || '';
+        
+        await updateRecipeDropdown(boxId, parseInt(ch));
+        if (elRecipe && m.recipe_id) elRecipe.value = m.recipe_id;
+
+        if (elCname && m.cement_name) elCname.value = m.cement_name;
+        await updateCementIdDropdown(boxId, parseInt(ch));
+        if (elCid && m.cement_id) elCid.value = m.cement_id;
+      }
+    }
+  } catch (e) {
+    console.error("Load Meta Error", e);
+  }
+}
+
+async function saveChannelMeta(boxId, chNum, btn) {
+  const orig = btn.innerText;
+  btn.innerText = "⏳";
+  btn.disabled = true;
+
+  const payload = {
+    box_id: boxId,
+    channel: chNum,
+    location: document.getElementById(`meta-loc-${boxId}-${chNum}`).value,
+    interface: document.getElementById(`meta-iface-${boxId}-${chNum}`).value,
+    custom_string: document.getElementById(`meta-custom-${boxId}-${chNum}`).value.trim(),
+    recipe_id: document.getElementById(`meta-recipe-${boxId}-${chNum}`).value,
+    cement_name: document.getElementById(`meta-cname-${boxId}-${chNum}`).value,
+    cement_id: document.getElementById(`meta-cid-${boxId}-${chNum}`).value
+  };
+
+  try {
+    const res = await fetch('/api/metadata/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    showToast(data.success ? 'Kanal-Infos gespeichert!' : 'Fehler beim Speichern', data.success ? 'success' : 'error');
+  } catch (e) {
+    showToast('Netzwerkfehler', 'error');
+  } finally {
+    btn.innerText = orig;
+    btn.disabled = false;
   }
 }
 
@@ -600,7 +737,6 @@ async function fetchData() {
     const data = await res.json();
     liveCacheData = data;
 
-    // 1. Alarm-Tabelle oben
     const triggerBody = document.getElementById('trigger-table-body');
     if (triggerBody && data.triggers && data.triggers.length > 0) {
       triggerBody.innerHTML = data.triggers.map(tData => {
@@ -619,7 +755,6 @@ async function fetchData() {
       triggerBody.innerHTML = `<tr><td colspan="3" class="py-2 text-slate-500 text-center italic">${t('alarms.empty', 'Keine Beton-Alarme registriert')}</td></tr>`;
     }
 
-    // 2. Boxen Status
     for (const [bid, bdata] of Object.entries(data.boxes)) {
       const dot = document.getElementById(`tab-dot-${bid}`);
       if (dot) dot.className = `w-2 h-2 rounded-full ${bdata.online ? 'bg-emerald-400' : 'bg-rose-500'}`;
@@ -674,7 +809,6 @@ async function fetchData() {
         }
       }
 
-      // Grid Sync
       const gDot = document.getElementById(`grid-dot-${bid}`);
       if (gDot) gDot.className = `w-2 h-2 rounded-full ${bdata.online ? 'bg-emerald-400' : 'bg-rose-500'}`;
 
@@ -727,9 +861,12 @@ async function fetchData() {
       if (swNtfy && bdata.ntfy_enabled !== undefined) swNtfy.checked = bdata.ntfy_enabled;
     }
 
-    // Automatisches Aktualisieren des geoeffneten Quickview-Widgets im 20s-Takt
-    if (activeBoxId && activeSubTab === 'quick_table' && currentDashboardMode === 'tabs') {
-      loadWidgetData(activeBoxId);
+    const currentBox = window.ACTIVE_BOX_ID || activeBoxId;
+    if (currentBox && currentDashboardMode === 'tabs') {
+      const quickTableVisible = document.getElementById(`subtab-content-${currentBox}-quick_table`);
+      if (quickTableVisible && !quickTableVisible.classList.contains('hidden')) {
+        loadWidgetData(currentBox);
+      }
     }
   } catch (err) {
     console.error("Fetch Data Error:", err);
@@ -738,12 +875,23 @@ async function fetchData() {
 
 document.addEventListener('DOMContentLoaded', () => {
   const saved = localStorage.getItem('concretum_active_box');
-  if (saved && document.getElementById(`tab-content-${saved}`)) {
-    activeBoxId = saved;
+  let targetId = (saved && document.getElementById(`tab-content-${saved}`)) ? saved : '';
+  
+  if (!targetId) {
+    const firstTab = document.querySelector('.tab-content');
+    if (firstTab && firstTab.id) {
+      targetId = firstTab.id.replace('tab-content-', '');
+    } else {
+      targetId = window.INITIAL_BOX_ID || '';
+    }
   }
-  if (activeBoxId) {
-    switchTab(activeBoxId);
+
+  if (targetId) {
+    activeBoxId = targetId;
+    window.ACTIVE_BOX_ID = targetId;
+    switchTab(targetId);
   }
+
   fetchData();
   setInterval(fetchData, 20000);
 });

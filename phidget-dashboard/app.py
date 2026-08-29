@@ -1,30 +1,26 @@
 """
 @file: app.py
-@version: 2.3.4
-@date: 2026-08-27
-@description: Dashboard App fuer modulare Geraete-Dateien (config/devices/*.yaml)
-              inklusive modularem History-Blueprint.
+@version: 2.4.0
+@date: 2026-08-29
+@description: Dashboard App mit zentralisiertem ConfigManager (core/config_manager.py)
+              fuer atomare YAML-Operationen, Thread-/Prozess-Sicherheit, Metadata-APIs und Blueprints.
 @author: Patrick Staehli
 """
 
 import os
 import re
-import glob
 import yaml
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from datetime import datetime, timezone
-from flask import Flask, render_template, jsonify, request, send_from_directory, abort, session
+from flask import Flask, render_template, jsonify, request, send_from_directory, abort, session, redirect
 import zoneinfo
+
+from core.config_manager import config_manager
 
 ALL_TIMEZONES = sorted([tz for tz in zoneinfo.available_timezones() if "/" in tz])
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_DIR = os.environ.get("YAML_CONFIG_PATH", os.path.join(BASE_DIR, "config"))
-if os.path.isfile(CONFIG_DIR):
-    CONFIG_DIR = os.path.dirname(CONFIG_DIR)
-
-DEVICES_DIR = os.path.join(CONFIG_DIR, "devices")
 ARCHIVE_DIR = os.path.join(BASE_DIR, "archive")
 TRANSLATIONS_DIR = os.path.join(BASE_DIR, "translations")
 
@@ -47,9 +43,12 @@ app.config["DB_NAME"] = DB_NAME
 app.config["DB_USER"] = DB_USER
 app.config["DB_PASS"] = DB_PASS
 
-# History Blueprint NACH der Initialisierung von app registrieren
+# Blueprints registrieren
 from routes.history import history_bp
 app.register_blueprint(history_bp)
+
+from routes.simulator import simulator_bp
+app.register_blueprint(simulator_bp)
 
 
 # ==========================================
@@ -71,133 +70,6 @@ def get_db_connection():
     except Exception as e:
         print(f"[DB Connection Error] {e}", flush=True)
         return None
-
-
-# ==========================================
-# YAML CONFIG HELPER (MODULAR PRO DEVICE)
-# ==========================================
-
-def load_yaml_raw():
-    """Laedt Server.yaml und alle Geraete-YAMLs aus config/devices/ zusammen."""
-    combined = {"Server": {}}
-    if not os.path.exists(DEVICES_DIR):
-        os.makedirs(DEVICES_DIR, exist_ok=True)
-
-    server_file = os.path.join(DEVICES_DIR, "Server.yaml")
-    if os.path.exists(server_file):
-        try:
-            with open(server_file, "r", encoding="utf-8") as f:
-                content = yaml.safe_load(f) or {}
-                if "Server" in content:
-                    combined["Server"] = content["Server"]
-                else:
-                    combined["Server"] = content
-        except Exception as e:
-            print(f"[YAML Load Error Server.yaml] {e}", flush=True)
-
-    pattern = os.path.join(DEVICES_DIR, "*.yaml")
-    for file_path in glob.glob(pattern):
-        filename = os.path.basename(file_path)
-        if filename.lower() == "server.yaml":
-            continue
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                dev_data = yaml.safe_load(f) or {}
-                if isinstance(dev_data, dict):
-                    combined.update(dev_data)
-        except Exception as e:
-            print(f"[YAML Load Error {filename}] {e}", flush=True)
-
-    return combined
-
-
-def get_device_file_path(device_key: str) -> str:
-    return os.path.join(DEVICES_DIR, f"{device_key}.yaml")
-
-
-def save_single_device_yaml(yaml_key: str, data_dict: dict) -> bool:
-    try:
-        os.makedirs(DEVICES_DIR, exist_ok=True)
-        file_path = get_device_file_path(yaml_key)
-        with open(file_path, "w", encoding="utf-8") as f:
-            yaml.dump({yaml_key: data_dict}, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
-        return True
-    except Exception as e:
-        print(f"[YAML Save Error for {yaml_key}] {e}", flush=True)
-        return False
-
-
-def get_parsed_config():
-    """Wandelt die eingelesenen Geraetedaten in eine strukturierte Liste fuer Jinja2 um."""
-    data = load_yaml_raw()
-    server_cfg = data.get("Server", {})
-    g_cfg = server_cfg.get("grafana", {})
-
-    boxes = []
-    for key, val in data.items():
-        if key == "Server" or not isinstance(val, dict):
-            continue
-        dev_id = val.get("device_id", key)
-        ch_count = int(val.get("channel_count", 4))
-        custom_labels = val.get("channel_labels", {})
-
-        channels = []
-        for i in range(ch_count):
-            ch_id = f"temp{i}"
-            ch_label = custom_labels.get(ch_id, f"Kanal {i + 1}")
-            channels.append({"id": ch_id, "label": ch_label})
-
-        grafana_base_url = g_cfg.get("server_url", "https://grafana.concretum-setting.com")
-        grafana_uid = g_cfg.get("uid", "paskgph")
-        grafana_slug = g_cfg.get("slug", "temperatur")
-        grafana_dashboard_url = f"{grafana_base_url}/d/{grafana_uid}/{grafana_slug}?orgId=1&var-device={dev_id}"
-
-        boxes.append({
-            "yaml_key": key,
-            "id": dev_id,
-            "name": val.get("name", key),
-            "box_label": val.get("box_label", ""),
-            "topic": val.get("ntfy_channel", "Concretum"),
-            "timezone": val.get("timezone", server_cfg.get("timezone", "Europe/Zurich")),
-            "channel_count": ch_count,
-            "serial": val.get("serial"),
-            "ip_lan": val.get("ip_lan"),
-            "mac_lan": val.get("mac_lan"),
-            "mac_wlan": val.get("mac_wlan"),
-            "workstation": val.get("workstation"),
-            "probe_detection": val.get("probe_detection", {}),
-            "auto_detection_enabled": val.get("auto_detection_enabled", False),
-            "turnaround_detection": val.get("turnaround_detection", {}),
-            "turnaround_detection_enabled": val.get("turnaround_detection_enabled", False),
-            "channel_recording_enabled": val.get("channel_recording_enabled", True),
-            "ntfy_enabled": val.get("ntfy_enabled", False),
-            "auto_reset_after_30m": val.get("auto_reset_after_30m", True),
-            "channels": channels,
-            "channel_labels": custom_labels
-        })
-    return {"server": server_cfg, "boxes": boxes}
-
-
-def update_box_switches(box_id: str, logging_state: bool, auto_detect: bool = None, turnaround: bool = None, ntfy_state: bool = None):
-    try:
-        raw_yaml = load_yaml_raw()
-        target_key = next((k for k, v in raw_yaml.items() if k != "Server" and isinstance(v, dict) and (v.get("device_id", "").lower() == str(box_id).lower() or k.lower() == str(box_id).lower())), None)
-        
-        if target_key:
-            box_data = raw_yaml[target_key]
-            box_data["channel_recording_enabled"] = logging_state
-            if auto_detect is not None:
-                box_data["auto_detection_enabled"] = auto_detect
-            if turnaround is not None:
-                box_data["turnaround_detection_enabled"] = turnaround
-            if ntfy_state is not None:
-                box_data["ntfy_enabled"] = ntfy_state
-            
-            return save_single_device_yaml(target_key, box_data)
-    except Exception as e:
-        print(f"[YAML Switch Update Error] {e}", flush=True)
-        return False
-    return False
 
 
 # ==========================================
@@ -268,7 +140,6 @@ def inject_i18n():
 def set_language(lang_code=None):
     valid_codes = [l["code"] for l in get_available_languages()]
     
-    # 1. Fall: POST-Request via JSON aus main.js
     if request.method == "POST":
         data = request.get_json() or {}
         lang = data.get("lang", "de").strip().lower()
@@ -277,7 +148,6 @@ def set_language(lang_code=None):
             return jsonify({"success": True, "lang": lang})
         return jsonify({"success": False, "error": f"Language '{lang}' not supported"}), 400
 
-    # 2. Fall: GET-Request via URL-Parameter (/set-language/de)
     if lang_code and lang_code.lower() in valid_codes:
         session["lang"] = lang_code.lower()
         return redirect(request.referrer or "/")
@@ -286,12 +156,12 @@ def set_language(lang_code=None):
 
 @app.route("/")
 def index():
-    cfg = get_parsed_config()
+    cfg = config_manager.get_parsed_config()
     return render_template("index.html", boxes=cfg["boxes"], config=cfg)
 
 @app.route("/config")
 def config_page():
-    cfg = get_parsed_config()
+    cfg = config_manager.get_parsed_config()
     return render_template(
         "config.html", 
         boxes=cfg["boxes"], 
@@ -299,6 +169,125 @@ def config_page():
         all_timezones=ALL_TIMEZONES
     )
 
+@app.route("/api/metadata/options")
+def get_metadata_options():
+    server_cfg = config_manager.get_server_config()
+    srv_opts = server_cfg.get("metadata_options", {})
+    default_opts = {
+        "locations": ["Extern", "EbiLab", "Ebirec"],
+        "interfaces": ["Lieferschein", "BT11", "LUCY", "ANA", "IDA"],
+        "cement_names": ["cem100", "cem50"],
+        "recipes": {},
+        "cement_ids": {}
+    }
+    default_opts.update(srv_opts)
+    return jsonify(default_opts)
+
+@app.route("/api/metadata/get/<box_id>")
+def get_channel_metadata(box_id):
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({"success": False, "error": "DB Connection Error"}), 500
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT channel, location, interface, custom_string, recipe_id, cement_name, cement_id, last_updated
+                FROM device_channel_metadata
+                WHERE device_id = %s;
+            """, (str(box_id),))
+            rows = cur.fetchall()
+            
+            meta_map = {}
+            for r in rows:
+                ch_idx = int(r["channel"])
+                meta_map[ch_idx] = {
+                    "channel": ch_idx,
+                    "location": r.get("location") or "Extern",
+                    "interface": r.get("interface") or "Lieferschein",
+                    "custom_string": r.get("custom_string") or "",
+                    "recipe_id": r.get("recipe_id") or "",
+                    "cement_name": r.get("cement_name") or "cem100",
+                    "cement_id": r.get("cement_id") or "",
+                    "last_updated": r.get("last_updated").isoformat() if r.get("last_updated") else None
+                }
+            return jsonify({"success": True, "metadata": meta_map})
+    except Exception as e:
+        print(f"[Metadata Get Error for {box_id}] {e}", flush=True)
+        return jsonify({"success": False, "error": str(e), "metadata": {}}), 200
+    finally:
+        conn.close()
+
+@app.route("/api/metadata/save", methods=["POST"])
+def save_channel_metadata():
+    data = request.get_json() or {}
+    box_id = data.get("box_id")
+    channel = int(data.get("channel", 0))
+    location = data.get("location", "Extern")
+    interface = data.get("interface", "Lieferschein")
+    custom_string = data.get("custom_string", "")
+    recipe_id = data.get("recipe_id", "")
+    cement_name = data.get("cement_name", "cem100")
+    cement_id = data.get("cement_id", "")
+
+    if not box_id:
+        return jsonify({"success": False, "error": "box_id fehlt"}), 400
+
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({"success": False, "error": "DB Connection Error"}), 500
+
+    now = datetime.now(timezone.utc)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO device_channel_metadata 
+                    (device_id, channel, location, interface, custom_string, recipe_id, cement_name, cement_id, last_updated)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (device_id, channel) DO UPDATE SET
+                    location = EXCLUDED.location,
+                    interface = EXCLUDED.interface,
+                    custom_string = EXCLUDED.custom_string,
+                    recipe_id = EXCLUDED.recipe_id,
+                    cement_name = EXCLUDED.cement_name,
+                    cement_id = EXCLUDED.cement_id,
+                    last_updated = EXCLUDED.last_updated;
+            """, (box_id, channel, location, interface, custom_string, recipe_id, cement_name, cement_id, now))
+
+            cur.execute("""
+                UPDATE device_channel_metadata_history
+                SET valid_to = %s
+                WHERE device_id = %s AND channel = %s AND valid_to IS NULL;
+            """, (now, box_id, channel))
+
+            cur.execute("""
+                INSERT INTO device_channel_metadata_history
+                    (device_id, channel, location, interface, custom_string, recipe_id, cement_name, cement_id, valid_from, valid_to)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NULL);
+            """, (box_id, channel, location, interface, custom_string, recipe_id, cement_name, cement_id, now))
+
+        dev_map = config_manager.get_device_map()
+        meta = dev_map.get(str(box_id).strip().lower())
+        if meta:
+            target_key = meta["yaml_key"]
+            raw_yaml = config_manager.load_all_raw()
+            box_data = raw_yaml.get(target_key, {})
+            if "channel_metadata" not in box_data:
+                box_data["channel_metadata"] = {}
+            box_data["channel_metadata"][f"temp{channel}"] = {
+                "location": location,
+                "interface": interface,
+                "custom_string": custom_string,
+                "recipe_id": recipe_id,
+                "cement_name": cement_name,
+                "cement_id": cement_id
+            }
+            config_manager.save_device_config(target_key, box_data)
+
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        conn.close()
 
 # ==========================================
 # API ENDPOINTS
@@ -306,7 +295,7 @@ def config_page():
 
 @app.route("/api/live-data")
 def live_data():
-    cfg = get_parsed_config()
+    cfg = config_manager.get_parsed_config()
     conn = get_db_connection()
     boxes_status = {}
     db_triggers = []
@@ -453,10 +442,11 @@ def get_widget_data(box_id):
     if not conn:
         return jsonify({"series": [], "available_channels": []})
 
-    raw_yaml = load_yaml_raw()
-    server_tz = raw_yaml.get("Server", {}).get("timezone", "Europe/Zurich")
-    target_box = next((v for k, v in raw_yaml.items() if k != "Server" and isinstance(v, dict) and (v.get("device_id", "").lower() == str(box_id).lower() or k.lower() == str(box_id).lower())), None)
-    box_tz_name = target_box.get("timezone", server_tz) if target_box else server_tz
+    dev_map = config_manager.get_device_map()
+    meta = dev_map.get(str(box_id).strip().lower())
+    server_cfg = config_manager.get_server_config()
+    server_tz = server_cfg.get("timezone", "Europe/Zurich")
+    box_tz_name = meta["data"].get("timezone", server_tz) if meta else server_tz
 
     try:
         target_tz = zoneinfo.ZoneInfo(box_tz_name)
@@ -556,7 +546,7 @@ def api_toggle_logging():
     data = request.get_json() or {}
     box_id = data.get("box_id")
     state = data.get("enabled", True)
-    success = update_box_switches(box_id, logging_state=state)
+    success = config_manager.update_box_switches(box_id, logging_state=state)
     return jsonify({"success": success})
 
 @app.route("/api/toggle-autodetect", methods=["POST"])
@@ -564,10 +554,10 @@ def api_toggle_autodetect():
     data = request.get_json() or {}
     box_id = data.get("box_id")
     state = data.get("enabled", True)
-    raw = load_yaml_raw()
-    target = next((v for k, v in raw.items() if isinstance(v, dict) and (v.get("device_id") == box_id or k == box_id)), {})
-    cur_logging = target.get("channel_recording_enabled", True)
-    success = update_box_switches(box_id, logging_state=cur_logging, auto_detect=state)
+    dev_map = config_manager.get_device_map()
+    meta = dev_map.get(str(box_id).strip().lower(), {})
+    cur_logging = meta.get("data", {}).get("channel_recording_enabled", True)
+    success = config_manager.update_box_switches(box_id, logging_state=cur_logging, auto_detect=state)
     return jsonify({"success": success})
 
 @app.route("/api/toggle-turnaround-detect", methods=["POST"])
@@ -576,10 +566,10 @@ def api_toggle_turnaround():
     data = request.get_json() or {}
     box_id = data.get("box_id")
     state = data.get("enabled", True)
-    raw = load_yaml_raw()
-    target = next((v for k, v in raw.items() if isinstance(v, dict) and (v.get("device_id") == box_id or k == box_id)), {})
-    cur_logging = target.get("channel_recording_enabled", True)
-    success = update_box_switches(box_id, logging_state=cur_logging, turnaround=state)
+    dev_map = config_manager.get_device_map()
+    meta = dev_map.get(str(box_id).strip().lower(), {})
+    cur_logging = meta.get("data", {}).get("channel_recording_enabled", True)
+    success = config_manager.update_box_switches(box_id, logging_state=cur_logging, turnaround=state)
     return jsonify({"success": success})
 
 @app.route("/api/toggle-ntfy", methods=["POST"])
@@ -587,10 +577,10 @@ def api_toggle_ntfy():
     data = request.get_json() or {}
     box_id = data.get("box_id")
     state = data.get("enabled", True)
-    raw = load_yaml_raw()
-    target = next((v for k, v in raw.items() if isinstance(v, dict) and (v.get("device_id") == box_id or k == box_id)), {})
-    cur_logging = target.get("channel_recording_enabled", True)
-    success = update_box_switches(box_id, logging_state=cur_logging, ntfy_state=state)
+    dev_map = config_manager.get_device_map()
+    meta = dev_map.get(str(box_id).strip().lower(), {})
+    cur_logging = meta.get("data", {}).get("channel_recording_enabled", True)
+    success = config_manager.update_box_switches(box_id, logging_state=cur_logging, ntfy_state=state)
     return jsonify({"success": success})
 
 @app.route("/api/update-channel-labels-batch", methods=["POST"])
@@ -602,19 +592,22 @@ def update_channel_labels_batch():
     if not box_id or not labels:
         return jsonify({"success": False, "error": "box_id und labels erforderlich"}), 400
 
-    raw_yaml = load_yaml_raw()
-    target_key = next((k for k, v in raw_yaml.items() if k != "Server" and isinstance(v, dict) and (v.get("device_id", "").lower() == box_id or k.lower() == box_id)), None)
-    if not target_key:
+    dev_map = config_manager.get_device_map()
+    meta = dev_map.get(box_id)
+    if not meta:
         return jsonify({"success": False, "error": "Geraet nicht gefunden"}), 404
 
-    box_data = raw_yaml[target_key]
+    target_key = meta["yaml_key"]
+    raw_yaml = config_manager.load_all_raw()
+    box_data = raw_yaml.get(target_key, {})
+
     if "channel_labels" not in box_data:
         box_data["channel_labels"] = {}
 
     for ch_id, label in labels.items():
         box_data["channel_labels"][ch_id] = str(label).strip()
 
-    if save_single_device_yaml(target_key, box_data):
+    if config_manager.save_device_config(target_key, box_data):
         return jsonify({"success": True})
     return jsonify({"success": False, "error": "Fehler beim Speichern der YAML"}), 500
 
@@ -624,11 +617,11 @@ def save_box():
     yaml_key = data.get("yaml_key", "").strip()
     dev_id = data.get("device_id", "").strip().lower()
 
-    if not dev_id or not yaml_key or yaml_key == "Server":
-        return jsonify({"success": False, "error": "Ungueltige Box-Parameter."}), 400
+    if not dev_id or not yaml_key or yaml_key.lower() == "server":
+        return jsonify({"success": False, "error": "Ungültige Box-Parameter."}), 400
 
     try:
-        raw_yaml = load_yaml_raw()
+        raw_yaml = config_manager.load_all_raw()
         existing_box = raw_yaml.get(yaml_key, {})
         existing_labels = existing_box.get("channel_labels", {})
         
@@ -638,16 +631,29 @@ def save_box():
                 if str(v).strip():
                     existing_labels[ch_name] = str(v).strip()
 
+        # 1. Probe Detection
         probe_detection = existing_box.get("probe_detection", {})
         if data.get("pd_delta_t_min"): probe_detection["delta_t_min"] = float(data["pd_delta_t_min"])
         if data.get("pd_slope_min"): probe_detection["slope_min"] = float(data["pd_slope_min"])
         if data.get("pd_rot_peak_min"): probe_detection["rot_peak_min"] = float(data["pd_rot_peak_min"])
 
+        # 2. Turnaround Detection
         turnaround_detection = existing_box.get("turnaround_detection", {})
         if data.get("td_sg_window"): turnaround_detection["sg_window"] = int(data["td_sg_window"])
         if data.get("td_cooling_slope_min"): turnaround_detection["cooling_slope_min"] = float(data["td_cooling_slope_min"])
         if data.get("td_reheating_slope_min"): turnaround_detection["reheating_slope_min"] = float(data["td_reheating_slope_min"])
         if data.get("td_min_cooling_delta"): turnaround_detection["min_cooling_delta"] = float(data["td_min_cooling_delta"])
+
+        # 3. Setting Detection
+        setting_detection = existing_box.get("setting_detection", {})
+        if data.get("sd_sg_window"): setting_detection["sg_window"] = int(data["sd_sg_window"])
+        if data.get("sd_poly_order"): setting_detection["poly_order"] = int(data["sd_poly_order"])
+        if data.get("sd_lookback_sec"): setting_detection["lookback_sec"] = int(data["sd_lookback_sec"])
+        if data.get("sd_min_samples"): setting_detection["min_samples"] = int(data["sd_min_samples"])
+        if data.get("sd_accel_min"): setting_detection["accel_min"] = float(data["sd_accel_min"])
+        if data.get("sd_slope_min"): setting_detection["slope_min"] = float(data["sd_slope_min"])
+        if data.get("sd_fallback_samples"): setting_detection["fallback_samples"] = int(data["sd_fallback_samples"])
+        if data.get("sd_fallback_step_min"): setting_detection["fallback_step_min"] = float(data["sd_fallback_step_min"])
 
         def parse_bool(val, default=True):
             if val is None:
@@ -660,7 +666,7 @@ def save_box():
 
         box_dict = {
             "name": data.get("name", existing_box.get("name", yaml_key)),
-            "box_label": data.get("box_label") or existing_box.get("box_label"),
+            "box_label": data.get("box_label") or existing_box.get("box_label", ""),
             "channel_count": int(data.get("channel_count", existing_box.get("channel_count", 4))),
             "device_id": dev_id,
             "serial": int(data["serial"]) if str(data.get("serial", "")).isdigit() else existing_box.get("serial"),
@@ -681,8 +687,10 @@ def save_box():
             box_dict["probe_detection"] = probe_detection
         if turnaround_detection:
             box_dict["turnaround_detection"] = turnaround_detection
+        if setting_detection:
+            box_dict["setting_detection"] = setting_detection
 
-        if save_single_device_yaml(yaml_key, box_dict):
+        if config_manager.save_device_config(yaml_key, box_dict):
             return jsonify({"success": True})
         return jsonify({"success": False, "error": "Speichern fehlgeschlagen"}), 500
     except Exception as e:
@@ -693,17 +701,12 @@ def delete_box():
     data = request.get_json() or {}
     yaml_key = data.get("yaml_key", "").strip()
 
-    if not yaml_key or yaml_key == "Server":
+    if not yaml_key or yaml_key.lower() == "server":
         return jsonify({"success": False, "error": "Ungueltiger Key."}), 400
 
-    file_path = get_device_file_path(yaml_key)
-    if os.path.exists(file_path):
-        try:
-            os.remove(file_path)
-            return jsonify({"success": True})
-        except Exception as e:
-            return jsonify({"success": False, "error": str(e)}), 500
-    return jsonify({"success": True})
+    if config_manager.delete_device_config(yaml_key):
+        return jsonify({"success": True})
+    return jsonify({"success": False, "error": "Loeschen fehlgeschlagen."}), 500
 
 @app.route("/api/clear-triggers", methods=["POST"])
 def clear_triggers():
@@ -729,19 +732,29 @@ def send_cmd():
     if not box_id or not cmd:
         return jsonify({"success": False, "error": "box_id und cmd erforderlich"}), 400
 
-    action, ch_str = cmd.split(":") if ":" in cmd else (cmd, None)
-    ch_num = int(ch_str.replace("temp", "")) if ch_str and "temp" in ch_str else 0
+    action, ch_str = cmd.split(":") if ":" in cmd else (cmd, "0")
+    
+    try:
+        ch_num = int(re.sub(r"\D", "", ch_str)) if re.sub(r"\D", "", ch_str) else 0
+    except ValueError:
+        ch_num = 0
+
     job_id = f"ch{ch_num}"
 
     if custom_label and ch_str:
-        raw_yaml = load_yaml_raw()
-        target_key = next((k for k, v in raw_yaml.items() if k != "Server" and isinstance(v, dict) and (v.get("device_id", "").lower() == str(box_id).lower() or k.lower() == str(box_id).lower())), None)
-        if target_key:
-            box_data = raw_yaml[target_key]
-            if "channel_labels" not in box_data:
-                box_data["channel_labels"] = {}
-            box_data["channel_labels"][ch_str] = custom_label
-            save_single_device_yaml(target_key, box_data)
+        try:
+            dev_map = config_manager.get_device_map()
+            meta = dev_map.get(str(box_id).strip().lower())
+            if meta:
+                target_key = meta["yaml_key"]
+                raw_yaml = config_manager.load_all_raw()
+                box_data = raw_yaml.get(target_key, {})
+                if "channel_labels" not in box_data:
+                    box_data["channel_labels"] = {}
+                box_data["channel_labels"][f"temp{ch_num}"] = str(custom_label).strip()
+                config_manager.save_device_config(target_key, box_data)
+        except Exception as e:
+            print(f"[YAML Cmd Label Error] {e}", flush=True)
 
     conn = get_db_connection()
     if not conn:
@@ -758,7 +771,8 @@ def send_cmd():
                     )
                     VALUES (%s, %s, %s, FALSE, FALSE, FALSE, FALSE, FALSE, NOW());
                 """, (box_id, ch_num, job_id))
-                update_box_switches(box_id, logging_state=True, auto_detect=True, turnaround=True)
+                config_manager.update_box_switches(box_id, logging_state=True, auto_detect=True, turnaround=True)
+
             elif action.startswith("export"):
                 cur.execute("""
                     INSERT INTO analyzer_state (device_id, channel, job_id, started_at, force_export)
@@ -766,17 +780,23 @@ def send_cmd():
                     ON CONFLICT (device_id, channel, job_id)
                     DO UPDATE SET force_export = TRUE;
                 """, (box_id, ch_num, job_id))
+
             elif action.startswith("reset"):
                 cur.execute("DELETE FROM analyzer_state WHERE device_id = %s AND channel = %s;", (box_id, ch_num))
                 cur.execute("""
                     SELECT COUNT(*) FROM analyzer_state 
                     WHERE device_id = %s AND started_at IS NOT NULL AND export_120_sent = FALSE;
                 """, (box_id,))
-                active_count = cur.fetchone()["count"]
+                row = cur.fetchone()
+                active_count = row["count"] if isinstance(row, dict) and "count" in row else (row[0] if row else 0)
                 if active_count == 0:
-                    update_box_switches(box_id, logging_state=False)
+                    config_manager.update_box_switches(box_id, logging_state=False)
+
+            conn.commit()
+
         return jsonify({"success": True})
     except Exception as e:
+        conn.rollback()
         return jsonify({"success": False, "error": str(e)}), 500
     finally:
         conn.close()

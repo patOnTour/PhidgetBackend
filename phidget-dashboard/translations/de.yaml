@@ -134,3 +134,16 @@ config:
   new_device_heading: "Neues Gerät in YAML anlegen"
   field_yaml_key: "YAML Key (z.B. baustellenkoffer_3):"
   btn_add_device: "Gerät hinzufügen"
+
+channel_meta:
+  tab_title: "🧪 Kanal-Infos"
+  desktop_only_notice: "Die Metadaten-Pflege ist für Desktop-Bildschirme optimiert."
+  save_btn: "Speichern"
+  th_channel: "Kanal"
+  th_location: "Messort"
+  th_interface: "Schnittstelle"
+  th_custom: "Eingabe (Notiz)"
+  th_recipe: "Rezept-ID"
+  th_cement: "Zement-Name"
+  th_cement_id: "Zement-ID"
+  th_action: "Aktion"
