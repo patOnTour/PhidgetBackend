@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # @file: git.sh
-# @version: 1.0.0
+# @version: 1.0.2
 # @date: 2026-08-27
 # @description: Git-Deployment-Skript für den Server (PhidgetBackend)
 # @author: Patrick Stähli
@@ -9,7 +9,7 @@
 set -e
 
 APP_DIR="/volume1/docker/telemetry"
-SCRIPT_VERSION="1.0.0"
+SCRIPT_VERSION="1.0.2"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -24,11 +24,21 @@ echo -e "${BLUE}=====================================================${NC}"
 
 # Automatische Rechte-Korrektur fuer Dateien, die von Docker (root) geschrieben wurden
 if [ "$(id -u)" -ne 0 ]; then
-    sudo chown -R patrick:users /volume1/docker/telemetry
-    sudo chmod -R u+rwX,g+rwX /volume1/docker/telemetry
+    sudo chown -R patrick:users "$APP_DIR"
+    sudo chmod -R u+rwX,g+rwX "$APP_DIR"
+    if [ -d "$APP_DIR/.ssh-keys" ]; then
+        sudo chmod 700 "$APP_DIR/.ssh-keys"
+        sudo chmod 600 "$APP_DIR/.ssh-keys"/id_* 2>/dev/null || true
+        sudo chmod 644 "$APP_DIR/.ssh-keys"/*.pub 2>/dev/null || true
+    fi
 else
-    chown -R patrick:users /volume1/docker/telemetry
-    chmod -R u+rwX,g+rwX /volume1/docker/telemetry
+    chown -R patrick:users "$APP_DIR"
+    chmod -R u+rwX,g+rwX "$APP_DIR"
+    if [ -d "$APP_DIR/.ssh-keys" ]; then
+        chmod 700 "$APP_DIR/.ssh-keys"
+        chmod 600 "$APP_DIR/.ssh-keys"/id_* 2>/dev/null || true
+        chmod 644 "$APP_DIR/.ssh-keys"/*.pub 2>/dev/null || true
+    fi
 fi
 
 # In das Server-Projektverzeichnis wechseln
