@@ -1,5 +1,19 @@
 # SYSTEM CONTRACT & ARCHITECTURE
 
+## 0 Global
+- **User und Docker Version auf dem NAS:** Auf dem NAS ist eine alte Docker Version. Daher mit docker-compose usw. Dort bin ich als patrick eingeloggt und brauche sudo in der Kommandozeile
+- **Container Namen & Zuordnung:**
+
+| Service in docker-compose.yml (Dienstname) | Container-Name (docker ps) | Funktion |
+| :--- | :--- | :--- |
+| `fastapi_ingest` | `fastapi_ingest` | Ingestion-API für Edge-Telemetriedaten |
+| `timescaledb` | `timescale_db` | Zeitreihen-Datenbank (PostgreSQL / TimescaleDB) |
+| `server-analyzer` | `server_analyzer` | Backend-Analyse für Wendepunkte & Setting |
+| `setting-control` | `concretum-control` | Web-Dashboard & REST-API (`app.py`) |
+| `probe-detector` | `probe_detector_analyzer` | Automatische Einstich-Erkennung |
+| `cloudflared` | `cloudflared_tunnel` | Cloudflare Zero Trust Tunnel |
+| `ntfy` | `ntfy-server` | Push-Benachrichtigungsdienst |
+
 ## 1. Identifikatoren & Namenskonventionen
 - **Box-ID (Global):** Eindeutiger technischer String (z. B. `ccssite99`, `ccssite01`, `ccssite02`).
 - **YAML-Dateiname:** Entspricht dem Box-Namen oder der Box-ID im Ordner `config/devices/*.yaml` (z. B. `dummy.yaml`, `baustellenkoffer_1.yaml`).

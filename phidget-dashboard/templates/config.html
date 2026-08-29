@@ -1,23 +1,25 @@
 <!--
 @file: config.html
-@version: 2.0.0
-@date: 2026-08-24
-@description: Vollstaendig lokalisiertes Konfigurations-Interface fuer Geraete und Parameter via i18n-Template-Tags und ausgelagertem config.js (DEV-11).
+@version: 2.1.0
+@date: 2026-08-29
+@description: Bereinigtes Konfigurations-Interface fuer Geraete-Stammdaten, Netzwerk und Hardware.
+              Sensorik-Schwellenwerte wurden vollstaendig in den Simulator ausgelagert (DEV-28).
 @author: Patrick Staehli
 -->
 <!DOCTYPE html>
 <html lang="{{ current_lang }}">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Concretum - {{ t('config.title', 'Geräte-Konfiguration') }}</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=2.0.0">
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
 </head>
-<body class="p-3 sm:p-6 max-w-4xl mx-auto pb-24">
+<body class="p-3 sm:p-6 max-w-4xl mx-auto pb-24 text-slate-100">
 
   <!-- Header -->
-  <header class="mb-6 flex justify-between items-center border-b border-slate-800 pb-3 flex-wrap gap-2">
+  <header class="mb-6 flex justify-between items-center border-b border-slate-800 pb-3 flex-wrap gap-2 relative">
     <div>
       <h1 class="text-xl font-bold tracking-tight text-white">CONCRETUM</h1>
       <p class="text-xs text-slate-400 font-mono">{{ t('config.subtitle', 'Geräte & Flotten-Management (YAML Master)') }}</p>
@@ -35,6 +37,44 @@
       <a href="/" class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-3 py-1.5 rounded-lg border border-slate-700 transition font-mono">
         &larr; {{ t('config.back_to_dashboard', 'Zum Dashboard') }}
       </a>
+
+      <!-- Hamburger Menue ("BigMac") -->
+      <div class="relative">
+        <button type="button" id="btn-hamburger" onclick="toggleHamburgerMenu()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 p-1.5 rounded-lg border border-slate-700 transition flex items-center justify-center w-8 h-8 focus:outline-none">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+          </svg>
+        </button>
+
+        <!-- Dropdown Menue Items -->
+        <div id="hamburger-menu" class="hidden absolute right-0 mt-2 w-52 bg-slate-900 border border-slate-800 rounded-xl py-2 shadow-2xl z-50 font-mono text-xs divide-y divide-slate-800">
+          <div class="py-1">
+            <a href="/" class="flex items-center gap-2 px-4 py-2 text-slate-300 hover:bg-slate-800 hover:text-white transition">
+              <span>🏠</span> {{ t('nav.dashboard', 'Dashboard') }}
+            </a>
+            <a href="/history" class="flex items-center gap-2 px-4 py-2 text-slate-300 hover:bg-slate-800 hover:text-white transition">
+              <span>📊</span> {{ t('nav.history', 'Verlauf & Export') }}
+            </a>
+          </div>
+          <div class="py-1">
+            <a href="/config" class="flex items-center justify-between px-4 py-2 text-white bg-slate-800/50 hover:bg-slate-800 transition">
+              <span class="flex items-center gap-2"><span>⚙️</span> {{ t('nav.config', 'Konfiguration') }}</span>
+              <span class="text-[10px] text-emerald-400">Aktiv</span>
+            </a>
+            <a href="/simulator" class="flex items-center justify-between px-4 py-2 text-slate-300 hover:bg-slate-800 hover:text-white transition">
+              <span class="flex items-center gap-2"><span>🧪</span> {{ t('nav.simulator', 'Simulator & Sensorik') }}</span>
+            </a>
+          </div>
+          <div class="py-1">
+            <a href="/manual" class="flex items-center gap-2 px-4 py-2 text-slate-400 hover:bg-slate-800 hover:text-white transition">
+              <span>📖</span> {{ t('nav.manual', 'Handbuch') }}
+            </a>
+            <button type="button" onclick="performAdminLogout()" class="w-full text-left flex items-center gap-2 px-4 py-2 text-rose-400 hover:bg-slate-800 transition">
+              <span>🚪</span> {{ t('nav.logout', 'Admin Logout') }}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   </header>
 
@@ -73,7 +113,7 @@
       <form onsubmit="saveBox(event, '{{ box.yaml_key }}')" class="space-y-4 text-xs font-mono">
         <input type="hidden" name="yaml_key" value="{{ box.yaml_key }}">
 
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div class="grid grid-cols-1 sm:grid-cols-4 gap-3">
           <div>
             <label class="block text-slate-400 mb-1">{{ t('config.field_name', 'Anzeigename:') }}</label>
             <input type="text" name="name" value="{{ box.name }}" required class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-slate-200 focus:border-sky-500">
@@ -85,6 +125,10 @@
           <div>
             <label class="block text-slate-400 mb-1">{{ t('config.field_box_label', 'Box Label:') }}</label>
             <input type="text" name="box_label" value="{{ box.box_label or '' }}" placeholder="z. B. Box 1" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-slate-200 focus:border-sky-500">
+          </div>
+          <div>
+            <label class="block text-slate-400 mb-1">{{ t('config.field_order', 'Sortier-Index (Order):') }}</label>
+            <input type="number" name="order" value="{{ box.order or 100 }}" placeholder="100" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-slate-200 focus:border-sky-500">
           </div>
         </div>
 
@@ -110,7 +154,7 @@
           </div>
           <div>
             <label class="block text-slate-400 mb-1">{{ t('config.field_workstation', 'Workstation / Zuständig:') }}</label>
-            <input type="text" name="workstation" value="{{ box.workstation or '' }}" placeholder="z. B. Pädi" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-slate-200 focus:border-sky-500">
+            <input type="text" name="workstation" value="{{ box.workstation or '' }}" placeholder="z. B. Labor" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-slate-200 focus:border-sky-500">
           </div>
         </div>
 
@@ -143,52 +187,6 @@
           </div>
         </div>
 
-        <!-- Einstich-Erkennung (Probe Detection) Schwellenwerte -->
-        <div class="p-3 bg-slate-950/60 border border-slate-800/80 rounded-lg space-y-3">
-          <div class="text-[11px] font-semibold text-amber-400 uppercase flex items-center gap-1.5">
-            <span>⚡</span> {{ t('config.probe_detection_title', 'Einstich-Erkennung (Schwellenwerte)') }}
-          </div>
-          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div>
-              <label class="block text-slate-500 mb-1">{{ t('config.pd_delta_t', 'Min. Delta T (°C / 60s):') }}</label>
-              <input type="number" step="0.05" name="pd_delta_t_min" value="{{ box.probe_detection.delta_t_min if box.probe_detection else '' }}" placeholder="0.80" class="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-slate-200">
-            </div>
-            <div>
-              <label class="block text-slate-500 mb-1">{{ t('config.pd_slope', 'Min. Steigung (°C/s):') }}</label>
-              <input type="number" step="0.001" name="pd_slope_min" value="{{ box.probe_detection.slope_min if box.probe_detection else '' }}" placeholder="0.015" class="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-slate-200">
-            </div>
-            <div>
-              <label class="block text-slate-500 mb-1">{{ t('config.pd_rot_peak', 'Min. Rotations-Peak (|T\'\'|):') }}</label>
-              <input type="number" step="0.005" name="pd_rot_peak_min" value="{{ box.probe_detection.rot_peak_min if box.probe_detection else '' }}" placeholder="0.035" class="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-slate-200">
-            </div>
-          </div>
-        </div>
-
-        <!-- Wendepunkt-Erkennung (Turnaround Detection) Schwellenwerte -->
-        <div class="p-3 bg-slate-950/60 border border-slate-800/80 rounded-lg space-y-3">
-          <div class="text-[11px] font-semibold text-sky-400 uppercase flex items-center gap-1.5">
-            <span>📉</span> {{ t('config.turnaround_detection_title', 'Wendepunkt-Erkennung (Schwellenwerte)') }}
-          </div>
-          <div class="grid grid-cols-1 sm:grid-cols-4 gap-3">
-            <div>
-              <label class="block text-slate-500 mb-1">{{ t('config.td_sg_window', 'SG-Fenster (Punkte):') }}</label>
-              <input type="number" step="2" name="td_sg_window" value="{{ box.turnaround_detection.sg_window if box.turnaround_detection else '' }}" placeholder="31" class="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-slate-200">
-            </div>
-            <div>
-              <label class="block text-slate-500 mb-1">{{ t('config.td_cooling_slope', 'Min. Abkühl-Steigung:') }}</label>
-              <input type="number" step="0.0001" name="td_cooling_slope_min" value="{{ box.turnaround_detection.cooling_slope_min if box.turnaround_detection else '' }}" placeholder="-0.0003" class="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-slate-200">
-            </div>
-            <div>
-              <label class="block text-slate-500 mb-1">{{ t('config.td_reheating_slope', 'Min. Anstieg-Steigung:') }}</label>
-              <input type="number" step="0.0001" name="td_reheating_slope_min" value="{{ box.turnaround_detection.reheating_slope_min if box.turnaround_detection else '' }}" placeholder="0.0003" class="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-slate-200">
-            </div>
-            <div>
-              <label class="block text-slate-500 mb-1">{{ t('config.td_cooling_delta', 'Min. Abkühlung (°C):') }}</label>
-              <input type="number" step="0.05" name="td_min_cooling_delta" value="{{ box.turnaround_detection.min_cooling_delta if box.turnaround_detection else '' }}" placeholder="0.20" class="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-slate-200">
-            </div>
-          </div>
-        </div>
-
         <!-- Standard Kanal-Labels -->
         <div class="p-3 bg-slate-950/60 border border-slate-800/80 rounded-lg space-y-3">
           <div class="text-[11px] font-semibold text-emerald-400 uppercase flex items-center gap-1.5">
@@ -204,7 +202,7 @@
           </div>
         </div>
 
-        <!-- Hardware Details -->
+        <!-- Hardware & Netzwerk Details -->
         <div class="p-3 bg-slate-950/60 border border-slate-800/80 rounded-lg space-y-3">
           <div class="text-[11px] font-semibold text-slate-400 uppercase">{{ t('config.hw_network_title', 'Hardware & Netzwerk') }}</div>
           <div class="grid grid-cols-1 sm:grid-cols-4 gap-3">
@@ -245,9 +243,9 @@
       </div>
 
       <form onsubmit="saveNewBox(event)" class="space-y-4 text-xs font-mono">
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div class="grid grid-cols-1 sm:grid-cols-4 gap-3">
           <div>
-            <label class="block text-slate-400 mb-1">{{ t('config.field_yaml_key', 'YAML Key (z.B. baustellenkoffer_3):') }}</label>
+            <label class="block text-slate-400 mb-1">{{ t('config.field_yaml_key', 'YAML Key:') }}</label>
             <input type="text" id="new-yaml-key" required placeholder="baustellenkoffer_3" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-slate-200 focus:border-sky-500">
           </div>
           <div>
@@ -255,8 +253,12 @@
             <input type="text" id="new-name" required placeholder="Baustellenkoffer 3" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-slate-200 focus:border-sky-500">
           </div>
           <div>
-            <label class="block text-slate-400 mb-1">{{ t('config.field_device_id', 'Device ID (z.B. ccssite03):') }}</label>
+            <label class="block text-slate-400 mb-1">{{ t('config.field_device_id', 'Device ID:') }}</label>
             <input type="text" id="new-device-id" required placeholder="ccssite03" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-slate-200 focus:border-sky-500">
+          </div>
+          <div>
+            <label class="block text-slate-400 mb-1">{{ t('config.field_order', 'Sortier-Index (Order):') }}</label>
+            <input type="number" id="new-order" value="100" placeholder="100" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-slate-200 focus:border-sky-500">
           </div>
         </div>
 
@@ -296,11 +298,11 @@
 
   </main>
 
-  <div id="toast" class="fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2.5 rounded-lg text-xs font-semibold shadow-xl border transition-opacity duration-200 opacity-0 pointer-events-none z-50"></div>
+  <div id="toast" class="fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2.5 rounded-lg text-xs font-semibold shadow-xl border transition-opacity duration-200 opacity-0 pointer-events-none z-50 font-mono"></div>
 
   <script>
     window.INITIAL_CONFIG_KEY = "{{ boxes[0].yaml_key if boxes else '__NEW__' }}";
   </script>
-  <script src="{{ url_for('static', filename='js/config.js') }}?v=1.0.0"></script>
+  <script src="{{ url_for('static', filename='js/config.js') }}?v=2.0.0"></script>
 </body>
 </html>

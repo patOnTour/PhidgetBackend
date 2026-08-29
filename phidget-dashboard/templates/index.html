@@ -1,8 +1,9 @@
 <!--
 @file: index.html
-@version: 1.9.2
-@date: 2026-08-26
-@description: Dashboard-Hauptseite fuer die Koffer-Ueberwachung mit Entkopplung der Kanalnamen-Eingabe (Speichern-Button gegen Race Conditions) und automatischer Asset-Versionierung.
+@version: 2.0.1
+@date: 2026-08-29
+@description: Dashboard-Hauptseite mit einheitlichem Hamburger-Menue, Phasen-Timeline (Start/Min/Setting),
+              manueller Zeitkorrektur, Koffer-Sichtbarkeitssteuerung und Password-Gate.
 @author: Patrick Stähli
 -->
 <!DOCTYPE html>
@@ -13,17 +14,18 @@
   <title>Concretum Setting Control</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=1.7.0">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=2.0.0">
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
 </head>
-<body class="p-3 sm:p-6 max-w-5xl mx-auto pb-24">
+<body class="p-3 sm:p-6 max-w-5xl mx-auto pb-24 text-slate-100">
 
   <!-- Header -->
-  <header class="mb-5 flex justify-between items-center border-b border-slate-800 pb-3 flex-wrap gap-2">
+  <header class="mb-5 flex justify-between items-center border-b border-slate-800 pb-3 flex-wrap gap-2 relative">
     <div>
       <h1 class="text-xl font-bold tracking-tight text-white">CONCRETUM</h1>
       <p class="text-xs text-slate-400 font-mono">{{ t('header.subtitle', 'Setting Telemetry & Control System') }}</p>
     </div>
+    
     <div class="flex items-center gap-2 flex-wrap">
       <!-- Ansichts-Umschalter (Tabs vs Grid) -->
       <div class="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-0.5 font-mono text-xs">
@@ -35,6 +37,27 @@
         </button>
       </div>
 
+      <!-- Koffer-Sichtbarkeits-Button -->
+      <div class="relative">
+        <button type="button" onclick="toggleVisibilityMenu()" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1 rounded-lg text-xs border border-slate-700 font-mono flex items-center gap-1.5 transition">
+          <span>👁️</span> <span class="hidden sm:inline">{{ t('header.boxes_visibility', 'Koffer') }}</span>
+        </button>
+        <div id="visibility-dropdown" class="hidden absolute right-0 mt-2 w-56 bg-slate-900 border border-slate-800 rounded-xl p-3 shadow-2xl z-40 font-mono text-xs space-y-2">
+          <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-800 pb-1">Koffer Ein-/Ausblenden</div>
+          <div id="visibility-checkbox-list" class="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+            {% for box in boxes %}
+            <label class="flex items-center justify-between text-slate-300 hover:text-white cursor-pointer py-0.5">
+              <span class="truncate pr-2">{{ box.name }}</span>
+              <input type="checkbox" value="{{ box.id }}" onchange="handleBoxVisibilityChange('{{ box.id }}', this.checked)" class="box-visibility-cb rounded bg-slate-950 border-slate-700 text-sky-500 focus:ring-0">
+            </label>
+            {% endfor %}
+          </div>
+          <button type="button" onclick="resetBoxVisibility()" class="w-full text-center text-[10px] text-sky-400 hover:text-sky-300 pt-1 border-t border-slate-800 block">
+            Alle wieder einblenden
+          </button>
+        </div>
+      </div>
+
       <!-- Sprachauswahl Dropdown -->
       <select onchange="changeLanguage(this.value)" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-1 rounded-lg text-xs border border-slate-700 font-mono focus:outline-none focus:border-sky-500 transition">
         {% for lang in available_languages %}
@@ -44,20 +67,50 @@
         {% endfor %}
       </select>
 
-      <!-- Konfiguration -->
-      <a href="/config" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1 rounded-lg text-xs border border-slate-700 transition flex items-center gap-1.5 font-mono">
-        {{ t('header.config_btn', 'Konfiguration') }}
-      </a>
-
-      <!-- History & Export -->
-      <a href="/history" class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1 rounded-lg text-xs border border-slate-700 transition flex items-center gap-1.5 font-mono">
-        <span>📊</span> {{ t('header.history_btn', 'Verlauf & Export') }}
-      </a>
-
       <!-- Sync Status -->
       <span class="px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-800 text-slate-300 border border-slate-700 font-mono flex items-center">
         {{ t('header.sync_label', 'Sync: 20s') }}
       </span>
+
+      <!-- Hamburger Menue ("BigMac") -->
+      <div class="relative">
+        <button type="button" id="btn-hamburger" onclick="toggleHamburgerMenu()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 p-1.5 rounded-lg border border-slate-700 transition flex items-center justify-center w-8 h-8 focus:outline-none">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+          </svg>
+        </button>
+
+        <!-- Dropdown Menue Items -->
+        <div id="hamburger-menu" class="hidden absolute right-0 mt-2 w-52 bg-slate-900 border border-slate-800 rounded-xl py-2 shadow-2xl z-50 font-mono text-xs divide-y divide-slate-800">
+          <div class="py-1">
+            <a href="/" class="flex items-center gap-2 px-4 py-2 text-white bg-slate-800/50 hover:bg-slate-800 transition">
+              <span>🏠</span> {{ t('nav.dashboard', 'Dashboard') }}
+            </a>
+            <a href="/history" class="flex items-center gap-2 px-4 py-2 text-slate-300 hover:bg-slate-800 hover:text-white transition">
+              <span>📊</span> {{ t('nav.history', 'Verlauf & Export') }}
+            </a>
+          </div>
+          <div class="py-1">
+            <a href="#" onclick="openProtectedPage('/config'); return false;" class="flex items-center justify-between px-4 py-2 text-slate-300 hover:bg-slate-800 hover:text-white transition">
+              <span class="flex items-center gap-2"><span>⚙️</span> {{ t('nav.config', 'Konfiguration') }}</span>
+              <span class="text-[10px] text-amber-400">🔒</span>
+            </a>
+            <a href="#" onclick="openProtectedPage('/simulator'); return false;" class="flex items-center justify-between px-4 py-2 text-slate-300 hover:bg-slate-800 hover:text-white transition">
+              <span class="flex items-center gap-2"><span>🧪</span> {{ t('nav.simulator', 'Simulator & Sensorik') }}</span>
+              <span class="text-[10px] text-amber-400">🔒</span>
+            </a>
+          </div>
+          <div class="py-1">
+            <a href="/manual" class="flex items-center gap-2 px-4 py-2 text-slate-400 hover:bg-slate-800 hover:text-white transition">
+              <span>📖</span> {{ t('nav.manual', 'Handbuch') }}
+            </a>
+            <button type="button" id="btn-admin-logout" onclick="performAdminLogout()" class="w-full text-left flex items-center gap-2 px-4 py-2 text-rose-400 hover:bg-slate-800 transition hidden">
+              <span>🚪</span> {{ t('nav.logout', 'Admin Logout') }}
+            </button>
+          </div>
+        </div>
+      </div>
+
     </div>
   </header>
 
@@ -85,7 +138,7 @@
   <!-- ==================== ANSICHT 1: EINZELANSICHT (TABS) ==================== -->
   <div id="container-view-tabs" class="space-y-6">
     <!-- Boxen Haupt-Navigation -->
-    <div class="flex gap-2 border-b border-slate-800 pb-2 mb-6 overflow-x-auto">
+    <div id="box-tabs-nav" class="flex gap-2 border-b border-slate-800 pb-2 mb-6 overflow-x-auto">
       {% for box in boxes %}
       <button onclick="switchTab('{{ box.id }}')" id="tab-btn-{{ box.id }}" 
               class="tab-btn px-4 py-2 rounded-lg text-xs font-medium border border-slate-800 bg-slate-900 text-slate-400 hover:text-white transition whitespace-nowrap flex items-center gap-2">
@@ -112,8 +165,7 @@
           </div>
 
           <div class="flex items-center gap-3 font-mono text-xs flex-wrap">
-
-            <!-- Industrie Kippschalter für Auto-Einstich -->
+            <!-- Kippschalter Auto-Einstich -->
             <div class="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5">
               <span class="text-[10px] text-slate-400 font-bold">{{ t('box.auto_probe', 'AUTO-EINSTICH') }}</span>
               <label class="rocker-switch" title="{{ t('box.auto_probe_tooltip', 'Automatische Einstich-Erkennung aktivieren/pausieren') }}">
@@ -122,7 +174,7 @@
               </label>
             </div>
 
-            <!-- Industrie Kippschalter für Wendepunkt -->
+            <!-- Kippschalter Wendepunkt -->
             <div class="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5">
               <span class="text-[10px] text-slate-400 font-bold">{{ t('box.turnaround', 'WENDEPUNKT') }}</span>
               <label class="rocker-switch" title="{{ t('box.turnaround_tooltip', 'Automatische Wendepunkt-Erkennung aktivieren/pausieren') }}">
@@ -131,7 +183,7 @@
               </label>
             </div>
 
-            <!-- Kippschalter für Kanäle Loggen -->
+            <!-- Kippschalter Kanäle Loggen -->
             <div class="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5">
               <span class="text-[10px] text-slate-400 font-bold">{{ t('box.logging', 'KANÄLE LOGGEN') }}</span>
               <label class="rocker-switch" title="{{ t('box.logging_tooltip', 'Aufzeichnung der Temperaturkanäle aktivieren/pausieren') }}">
@@ -140,7 +192,7 @@
               </label>
             </div>
 
-            <!-- Kippschalter für Ntfy Alarme -->
+            <!-- Kippschalter Ntfy Alarme -->
             <div class="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5">
               <span class="text-[10px] text-slate-400 font-bold">{{ t('box.ntfy', 'NTFY ALARME') }}</span>
               <label class="rocker-switch" title="{{ t('box.ntfy_tooltip', 'Push-Benachrichtigungen aktivieren/stummschalten') }}">
@@ -176,7 +228,7 @@
           </button>
         </div>
 
-        <!-- TAB 1: KANAL-STEUERUNG -->
+        <!-- TAB 1: KANAL-STEUERUNG & PHASEN-TIMELINE -->
         <div id="subtab-content-{{ box.id }}-control" class="space-y-4">
           <!-- Live ntfy Message Box -->
           <div class="bg-slate-950/80 border border-slate-800 rounded-lg p-3 text-xs font-mono">
@@ -187,13 +239,15 @@
             <div id="msg-text-{{ box.id }}" class="text-slate-300 whitespace-pre-wrap">{{ t('box.waiting_msg', 'Warte auf Meldungen...') }}</div>
           </div>
 
-          <!-- Kanäle Grid -->
+          <!-- Kanäle Grid mit Phasen-Timeline -->
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {% for ch in box.channels %}
-            <div class="bg-slate-900 border border-slate-800 rounded-xl p-3 flex flex-col justify-between gap-2.5">
+            {% set ch_num = loop.index0 %}
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-3.5 flex flex-col justify-between gap-3 shadow">
+              
+              <!-- Kopfzeile: Name & Temperatur -->
               <div class="flex justify-between items-start gap-2">
                 <div class="flex-1">
-                  <!-- Entkoppelt: onchange entfernt, damit das Autoupdate Eingaben nicht überschreibt -->
                   <input type="text" id="label-input-{{ box.id }}-{{ ch.id }}" value="{{ ch.label }}" 
                          placeholder="Messungs-Name z.B. Lucy_ID..." 
                          class="bg-slate-950 border border-slate-800/80 hover:border-slate-700 focus:border-sky-500 rounded px-2 py-1 text-xs font-semibold text-slate-200 w-full transition">
@@ -205,16 +259,52 @@
                 </div>
               </div>
 
+              <!-- Interaktive Phasen-Timeline -->
+              <div class="bg-slate-950/60 border border-slate-800/80 rounded-lg p-2 font-mono text-xs">
+                <div class="text-[10px] text-slate-400 font-semibold mb-1 flex justify-between">
+                  <span>{{ t('phases.title', 'Phasen-Status') }}</span>
+                  <span class="text-[9px] text-slate-500">Tippen zum Anpassen</span>
+                </div>
+                <div class="grid grid-cols-3 gap-1 text-center">
+                  <!-- Start Phase -->
+                  <div onclick="openTimeAdjustModal('{{ box.id }}', {{ ch_num }}, 'start', '{{ ch.label }}')" 
+                       id="phase-start-{{ box.id }}-{{ ch.id }}"
+                       class="p-1 rounded bg-slate-900 border border-slate-800 hover:border-sky-500 cursor-pointer transition">
+                    <div class="text-[9px] text-slate-400 font-bold">1. Start</div>
+                    <div id="phase-time-start-{{ box.id }}-{{ ch.id }}" class="text-[10px] text-slate-300 font-semibold truncate">--:--:--</div>
+                  </div>
+
+                  <!-- Wendepunkt Phase -->
+                  <div onclick="openTimeAdjustModal('{{ box.id }}', {{ ch_num }}, 'turnaround', '{{ ch.label }}')" 
+                       id="phase-turnaround-{{ box.id }}-{{ ch.id }}"
+                       class="p-1 rounded bg-slate-900 border border-slate-800 hover:border-amber-500 cursor-pointer transition">
+                    <div class="text-[9px] text-slate-400 font-bold">2. Min (Turn)</div>
+                    <div id="phase-time-turnaround-{{ box.id }}-{{ ch.id }}" class="text-[10px] text-slate-300 font-semibold truncate">--:--:--</div>
+                  </div>
+
+                  <!-- Setting Phase -->
+                  <div onclick="openTimeAdjustModal('{{ box.id }}', {{ ch_num }}, 'trigger', '{{ ch.label }}')" 
+                       id="phase-trigger-{{ box.id }}-{{ ch.id }}"
+                       class="p-1 rounded bg-slate-900 border border-slate-800 hover:border-rose-500 cursor-pointer transition">
+                    <div class="text-[9px] text-slate-400 font-bold">3. Setting</div>
+                    <div id="phase-time-trigger-{{ box.id }}-{{ ch.id }}" class="text-[10px] text-slate-300 font-semibold truncate">--:--:--</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Steuerungsbuttons -->
               <div class="flex gap-1.5 pt-2 border-t border-slate-800/80">
                 <button onclick="startMeasurement('{{ box.id }}', '{{ ch.id }}', this)" class="flex-1 bg-emerald-700 hover:bg-emerald-600 active:bg-emerald-800 text-white font-bold py-1.5 rounded text-xs transition">START</button>
+                <button onclick="triggerSettingNow('{{ box.id }}', {{ ch_num }}, this)" class="flex-1 bg-sky-700 hover:bg-sky-600 active:bg-sky-800 text-white font-bold py-1.5 rounded text-xs transition" title="Abbindebeginn sofort auf jetzige Zeit setzen">SET</button>
                 <button onclick="sendCmd('{{ box.id }}', 'export:{{ ch.id }}', this)" class="flex-1 bg-amber-600 hover:bg-amber-500 active:bg-amber-700 text-white font-bold py-1.5 rounded text-xs transition">EXP</button>
                 <button onclick="sendCmd('{{ box.id }}', 'reset:{{ ch.id }}', this)" class="flex-1 bg-rose-700 hover:bg-rose-600 active:bg-rose-800 text-white font-bold py-1.5 rounded text-xs transition">RST</button>
               </div>
+
             </div>
             {% endfor %}
           </div>
 
-          <!-- Button zum expliziten Speichern der Kanalnamen (Verhindert Race Conditions bei Mehrbenutzer-Nutzung) -->
+          <!-- Speichern der Kanalnamen -->
           <div class="flex justify-end pt-1">
             <button type="button" onclick="saveAllChannelLabels('{{ box.id }}', {{ box.channel_count }})" class="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 px-3 py-1.5 rounded-lg text-xs font-mono transition shadow">
               💾 Kanalnamen für {{ box.name }} speichern
@@ -235,10 +325,8 @@
         <!-- TAB 2: INTERAKTIVES TELEMETRIE-WIDGET -->
         <div id="subtab-content-{{ box.id }}-quick_table" class="space-y-3 hidden">
           <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-lg space-y-4">
-            
             <!-- Widget Toolbar -->
             <div class="flex flex-wrap justify-between items-center gap-3 border-b border-slate-800/80 pb-3 font-mono text-xs">
-              
               <!-- Zeitraum Filter -->
               <div class="flex items-center gap-1.5 bg-slate-950 p-1 rounded-lg border border-slate-800">
                 <span class="text-slate-500 px-2 font-bold text-[10px]">{{ t('widget.range_label', 'ZEIT:') }}</span>
@@ -248,7 +336,7 @@
                 <button type="button" onclick="setWidgetRange('{{ box.id }}', 120)" class="range-btn-{{ box.id }} px-2.5 py-1 rounded text-slate-400 hover:text-white" data-min="120">2h</button>
               </div>
 
-              <!-- View Switcher (Tabelle <-> Graph) -->
+              <!-- View Switcher -->
               <div class="flex items-center bg-slate-950 p-1 rounded-lg border border-slate-800">
                 <button type="button" id="btn-view-chart-{{ box.id }}" onclick="setWidgetView('{{ box.id }}', 'chart')" class="px-3 py-1 rounded bg-sky-950 text-sky-300 font-bold border border-sky-800 flex items-center gap-1.5">
                   <span>📈</span> {{ t('widget.view_chart', 'Graph') }}
@@ -259,7 +347,7 @@
               </div>
             </div>
 
-            <!-- Kanal-Mehrfachauswahl (Badges) -->
+            <!-- Kanal-Mehrfachauswahl -->
             <div class="flex flex-wrap items-center gap-2 font-mono text-xs">
               <span class="text-slate-500 text-[10px] font-bold">{{ t('widget.channels_label', 'KANÄLE:') }}</span>
               <button type="button" onclick="toggleWidgetChannel('{{ box.id }}', '100')" id="tag-{{ box.id }}-100" class="ch-tag-{{ box.id }} px-2.5 py-1 rounded-md bg-sky-950/80 text-sky-300 border border-sky-800 font-semibold" data-ch="100">
@@ -272,12 +360,12 @@
               {% endfor %}
             </div>
 
-            <!-- Ansicht 1: Interaktiver Chart.js Graph -->
+            <!-- Graph View -->
             <div id="widget-view-chart-{{ box.id }}" class="w-full relative" style="height: 320px; min-height: 320px;">
               <canvas id="canvas-widget-{{ box.id }}"></canvas>
             </div>
 
-            <!-- Ansicht 2: Tabelle -->
+            <!-- Table View -->
             <div id="widget-view-table-{{ box.id }}" class="hidden overflow-x-auto overflow-y-auto" style="max-height: 320px;">
               <table class="w-full text-left text-xs font-mono">
                 <thead class="sticky top-0 bg-slate-900 border-b border-slate-800 text-slate-400">
@@ -290,18 +378,15 @@
                 </tbody>
               </table>
             </div>
-
           </div>
         </div>
         
         <!-- TAB 3: KANAL-METADATEN (LABOR & FILEMAKER) -->
         <div id="subtab-content-{{ box.id }}-meta" class="space-y-3 hidden">
-          <!-- Mobile Hinweis -->
           <div class="block md:hidden bg-amber-950/40 border border-amber-800/60 rounded-xl p-4 text-xs font-mono text-amber-300">
             ⚠️ {{ t('channel_meta.desktop_only_notice', 'Die Metadaten-Pflege ist für Desktop-Bildschirme optimiert.') }}
           </div>
           
-          <!-- Desktop Tabelle -->
           <div class="hidden md:block bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-lg overflow-x-auto">
             <table class="w-full text-left text-xs font-mono">
               <thead class="border-b border-slate-800 text-slate-400">
@@ -341,9 +426,7 @@
                     <input type="text" id="meta-custom-{{ box.id }}-{{ ch_num }}" placeholder="Notiz..." class="bg-slate-950 border border-slate-800 rounded p-1 text-slate-200 w-32">
                   </td>
                   <td class="py-2 px-1">
-                    <select id="meta-recipe-{{ box.id }}-{{ ch_num }}" class="bg-slate-950 border border-slate-800 rounded p-1 text-slate-200 w-32">
-                      <option value="">-</option>
-                    </select>
+                    <input type="text" id="meta-recipe-{{ box.id }}-{{ ch_num }}" placeholder="R-..." class="bg-slate-950 border border-slate-800 rounded p-1 text-slate-200 w-32">
                   </td>
                   <td class="py-2 px-1">
                     <select id="meta-cname-{{ box.id }}-{{ ch_num }}" onchange="updateCementIdDropdown('{{ box.id }}', {{ ch_num }})" class="bg-slate-950 border border-slate-800 rounded p-1 text-slate-200 w-24">
@@ -372,11 +455,10 @@
     </div>
   </div>
 
-  <!-- ==================== ANSICHT 2: KOMPAKTE GRID-ANSICHT (FOKUS: ALARM & RELAIS) ==================== -->
+  <!-- ==================== ANSICHT 2: KOMPAKTE GRID-ANSICHT ==================== -->
   <div id="container-view-grid" class="hidden grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
     {% for box in boxes %}
-    <div onclick="openBoxTab('{{ box.id }}')" class="bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-xl p-4 shadow-lg cursor-pointer transition flex flex-col justify-between gap-3">
-      
+    <div id="grid-card-{{ box.id }}" onclick="openBoxTab('{{ box.id }}')" class="bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-xl p-4 shadow-lg cursor-pointer transition flex flex-col justify-between gap-3">
       <!-- Kachel-Header -->
       <div class="flex justify-between items-start">
         <div>
@@ -391,7 +473,7 @@
         </span>
       </div>
 
-      <!-- Relais- & Kanal-Statusmatrix (kompakt) -->
+      <!-- Relais- & Kanal-Statusmatrix -->
       <div class="bg-slate-950/80 border border-slate-800/80 rounded-lg p-2.5 space-y-2 font-mono">
         <div class="flex justify-between items-center text-[10px] text-slate-400 border-b border-slate-800 pb-1 font-semibold uppercase">
           <span>Kanal / Relais</span>
@@ -412,7 +494,7 @@
         </div>
       </div>
 
-      <!-- Kachel-Footer mit Direktlink -->
+      <!-- Kachel-Footer -->
       <div class="flex justify-between items-center pt-1 border-t border-slate-800/60 text-[11px] font-mono text-slate-400">
         <span class="truncate">Topic: {{ box.topic }}</span>
         <span class="text-sky-400 hover:text-sky-300 font-semibold flex items-center gap-1">
@@ -423,6 +505,65 @@
     {% endfor %}
   </div>
 
+  <!-- ==================== MODAL: ZEITKORREKTUR (PHASEN-OVERRIDE) ==================== -->
+  <div id="modal-time-adjust" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden" onclick="closeTimeAdjustModal()">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 w-full max-w-sm shadow-2xl space-y-4" onclick="event.stopPropagation()">
+      <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+        <h3 class="text-sm font-bold text-white font-mono flex items-center gap-2">
+          <span>⏱️</span> <span id="modal-adjust-title">Zeit anpassen</span>
+        </h3>
+        <button type="button" onclick="closeTimeAdjustModal()" class="text-slate-400 hover:text-white text-base font-bold">✕</button>
+      </div>
+
+      <div class="space-y-3 font-mono text-xs">
+        <div class="text-slate-400 text-[11px]" id="modal-adjust-subtitle">Kanal-Info</div>
+
+        <!-- Schnellkorrektur Tasten -->
+        <div class="grid grid-cols-4 gap-1.5 pt-1">
+          <button type="button" onclick="adjustModalTimeDelta(-300)" class="py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold border border-slate-700">-5m</button>
+          <button type="button" onclick="adjustModalTimeDelta(-60)" class="py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold border border-slate-700">-1m</button>
+          <button type="button" onclick="adjustModalTimeDelta(60)" class="py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold border border-slate-700">+1m</button>
+          <button type="button" onclick="adjustModalTimeDelta(300)" class="py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold border border-slate-700">+5m</button>
+        </div>
+
+        <!-- Exakte Datums- und Zeiteingabe -->
+        <div class="space-y-1 pt-2">
+          <label class="text-[10px] text-slate-400 block font-semibold">Exakter Zeitstempel:</label>
+          <input type="datetime-local" step="1" id="modal-adjust-input" class="w-full bg-slate-950 border border-slate-800 focus:border-sky-500 rounded p-2 text-white text-xs font-mono">
+        </div>
+      </div>
+
+      <div class="flex gap-2 pt-2 border-t border-slate-800">
+        <button type="button" onclick="setModalTimeToNow()" class="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold py-2 rounded-lg text-xs font-mono border border-slate-700 transition">Jetzt</button>
+        <button type="button" onclick="saveAdjustedTime()" class="flex-1 bg-sky-600 hover:bg-sky-500 text-white font-bold py-2 rounded-lg text-xs font-mono transition">Speichern</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL: ADMIN PASSWORT ==================== -->
+  <div id="modal-admin-auth" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden" onclick="closeAdminAuthModal()">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 w-full max-w-sm shadow-2xl space-y-4" onclick="event.stopPropagation()">
+      <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+        <h3 class="text-sm font-bold text-white font-mono flex items-center gap-2">
+          <span>🔒</span> Admin-Authentifizierung
+        </h3>
+        <button type="button" onclick="closeAdminAuthModal()" class="text-slate-400 hover:text-white text-base font-bold">✕</button>
+      </div>
+
+      <form onsubmit="submitAdminLogin(event)" class="space-y-3 font-mono text-xs">
+        <p class="text-slate-400 text-[11px]">Für den Zugriff auf geschützte System-Einstellungen ist das Admin-Passwort erforderlich.</p>
+        <div>
+          <input type="password" id="admin-password-input" placeholder="Passwort eingeben..." class="w-full bg-slate-950 border border-slate-800 focus:border-sky-500 rounded p-2 text-white text-xs">
+          <div id="admin-auth-error" class="text-rose-400 text-[10px] mt-1 hidden">Passwort ungültig.</div>
+        </div>
+        <div class="flex gap-2 pt-2">
+          <button type="button" onclick="closeAdminAuthModal()" class="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-2 rounded-lg text-xs border border-slate-700 transition">Abbrechen</button>
+          <button type="submit" class="flex-1 bg-sky-600 hover:bg-sky-500 text-white font-bold py-2 rounded-lg text-xs transition">Anmelden</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Image Modal -->
   <div id="image-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden" onclick="closeImageModal()">
     <div class="relative max-w-4xl max-h-[90vh] bg-slate-900 border border-slate-800 rounded-xl p-2 shadow-2xl" onclick="event.stopPropagation()">
@@ -431,10 +572,11 @@
     </div>
   </div>
 
-  <div id="toast" class="fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2.5 rounded-lg text-xs font-semibold shadow-xl border transition-opacity duration-200 opacity-0 pointer-events-none z-50"></div>
+  <div id="toast" class="fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2.5 rounded-lg text-xs font-semibold shadow-xl border transition-opacity duration-200 opacity-0 pointer-events-none z-50 font-mono"></div>
 
   <script>
     window.INITIAL_BOX_ID = "{{ boxes[0].id if boxes else '' }}";
+    window.IS_ADMIN = {{ 'true' if is_admin else 'false' }};
     window.CHANNEL_COUNTS = {
       {% for box in boxes %}
       "{{ box.id }}": {{ box.channel_count or 0 }}{% if not loop.last %},{% endif %}
@@ -442,6 +584,6 @@
     };
     window.I18N = {{ translations_json | tojson }};
   </script>
-  <script src="{{ url_for('static', filename='js/main.js') }}?v=1.9.2"></script>
+  <script src="{{ url_for('static', filename='js/main.js') }}?v=2.0.1"></script>
 </body>
 </html>

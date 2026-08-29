@@ -22,6 +22,15 @@ echo -e "${BLUE}       PhidgetBackend Server Git Deployment          ${NC}"
 echo -e "${BLUE}       Skript-Version: v${SCRIPT_VERSION}            ${NC}"
 echo -e "${BLUE}=====================================================${NC}"
 
+# Automatische Rechte-Korrektur fuer Dateien, die von Docker (root) geschrieben wurden
+if [ "$(id -u)" -ne 0 ]; then
+    sudo chown -R patrick:users /volume1/docker/telemetry
+    sudo chmod -R u+rwX,g+rwX /volume1/docker/telemetry
+else
+    chown -R patrick:users /volume1/docker/telemetry
+    chmod -R u+rwX,g+rwX /volume1/docker/telemetry
+fi
+
 # In das Server-Projektverzeichnis wechseln
 cd "$APP_DIR"
 git config --global --add safe.directory "$APP_DIR"

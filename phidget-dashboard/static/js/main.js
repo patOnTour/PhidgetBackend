@@ -1,9 +1,8 @@
 /**
  * @file: main.js
- * @version: 1.9.2
+ * @version: 2.0.1
  * @date: 2026-08-29
- * @description: Frontend-Steuerung für das Telemetrie-Dashboard mit flexibler Unterstützung
- *               für 4 bis 8 Kanäle im Quickview (Graph mit 2 Dezimalstellen, Tabelle mit 1 Dezimalstelle ohne °C).
+ * @description: Frontend-Steuerung fuer das Telemetrie-Dashboard mit zuverlaessigem Redirect nach Admin-Login.
  * @author: Patrick Stähli
  */
 
@@ -14,6 +13,18 @@ let liveCacheData = {};
 let metaOptionsCache = null;
 const channelCounts = window.CHANNEL_COUNTS || {};
 const widgetState = {};
+
+// Zustand fuer Zeitkorrektur-Modal
+let activeModalContext = {
+  boxId: null,
+  channel: null,
+  eventType: null,
+  currentTimestamp: null
+};
+
+// ==========================================
+// I18N & SPRACHE
+// ==========================================
 
 function t(path, fallback = '') {
   if (!window.I18N) return fallback;
@@ -46,6 +57,180 @@ async function changeLanguage(langCode) {
     showToast('Netzwerkfehler', 'error');
   }
 }
+
+// ==========================================
+// HAMBURGER-MENÜ & ADMIN-AUTH
+// ==========================================
+
+function toggleHamburgerMenu() {
+  const menu = document.getElementById('hamburger-menu');
+  if (menu) {
+    menu.classList.toggle('hidden');
+  }
+}
+
+function toggleVisibilityMenu() {
+  const menu = document.getElementById('visibility-dropdown');
+  if (menu) {
+    menu.classList.toggle('hidden');
+  }
+}
+
+document.addEventListener('click', (e) => {
+  const btnHam = document.getElementById('btn-hamburger');
+  const menuHam = document.getElementById('hamburger-menu');
+  if (btnHam && menuHam && !btnHam.contains(e.target) && !menuHam.contains(e.target)) {
+    menuHam.classList.add('hidden');
+  }
+
+  const visBtn = document.querySelector('button[onclick="toggleVisibilityMenu()"]');
+  const visMenu = document.getElementById('visibility-dropdown');
+  if (visBtn && visMenu && !visBtn.contains(e.target) && !visMenu.contains(e.target)) {
+    visMenu.classList.add('hidden');
+  }
+});
+
+let pendingRedirectUrl = null;
+
+function openProtectedPage(targetUrl) {
+  if (window.IS_ADMIN) {
+    window.location.href = targetUrl;
+    return;
+  }
+  pendingRedirectUrl = targetUrl;
+  const modal = document.getElementById('modal-admin-auth');
+  const input = document.getElementById('admin-password-input');
+  const err = document.getElementById('admin-auth-error');
+  if (err) err.classList.add('hidden');
+  if (input) input.value = '';
+  if (modal) modal.classList.remove('hidden');
+  if (input) input.focus();
+}
+
+function closeAdminAuthModal() {
+  const modal = document.getElementById('modal-admin-auth');
+  if (modal) modal.classList.add('hidden');
+  pendingRedirectUrl = null;
+}
+
+async function submitAdminLogin(event) {
+  event.preventDefault();
+  const input = document.getElementById('admin-password-input');
+  const err = document.getElementById('admin-auth-error');
+  const pwd = input ? input.value : '';
+  const targetUrl = pendingRedirectUrl; // Ziel-URL vor dem Schliessen des Modals sichern
+
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pwd })
+    });
+    const data = await res.json();
+    if (data.success) {
+      window.IS_ADMIN = true;
+      const logoutBtn = document.getElementById('btn-admin-logout');
+      if (logoutBtn) logoutBtn.classList.remove('hidden');
+      closeAdminAuthModal();
+      
+      if (targetUrl) {
+        window.location.href = targetUrl;
+      } else {
+        showToast('Erfolgreich als Admin angemeldet', 'success');
+      }
+    } else {
+      if (err) {
+        err.innerText = data.error || 'Ungültiges Passwort';
+        err.classList.remove('hidden');
+      }
+    }
+  } catch (e) {
+    if (err) {
+      err.innerText = 'Netzwerkfehler';
+      err.classList.remove('hidden');
+    }
+  }
+}
+
+async function performAdminLogout() {
+  try {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    window.IS_ADMIN = false;
+    const logoutBtn = document.getElementById('btn-admin-logout');
+    if (logoutBtn) logoutBtn.classList.add('hidden');
+    showToast('Admin-Sitzung beendet', 'success');
+  } catch (e) {
+    showToast('Fehler beim Abmelden', 'error');
+  }
+}
+
+// ==========================================
+// KOFFER-SICHTBARKEIT (LOCALSTORAGE)
+// ==========================================
+
+function getHiddenBoxes() {
+  try {
+    return JSON.parse(localStorage.getItem('concretum_hidden_boxes') || '[]');
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveHiddenBoxes(list) {
+  localStorage.setItem('concretum_hidden_boxes', JSON.stringify(list));
+}
+
+function applySavedBoxVisibility() {
+  const hiddenBoxes = getHiddenBoxes();
+
+  document.querySelectorAll('.box-visibility-cb').forEach(cb => {
+    cb.checked = !hiddenBoxes.includes(cb.value);
+  });
+
+  hiddenBoxes.forEach(boxId => {
+    const tabBtn = document.getElementById(`tab-btn-${boxId}`);
+    const tabContent = document.getElementById(`tab-content-${boxId}`);
+    const gridCard = document.getElementById(`grid-card-${boxId}`);
+    if (tabBtn) tabBtn.classList.add('hidden');
+    if (tabContent) tabContent.classList.add('hidden');
+    if (gridCard) gridCard.classList.add('hidden');
+  });
+
+  if (hiddenBoxes.includes(activeBoxId)) {
+    const firstVisibleBtn = document.querySelector('.tab-btn:not(.hidden)');
+    if (firstVisibleBtn) {
+      const fallbackId = firstVisibleBtn.id.replace('tab-btn-', '');
+      switchTab(fallbackId);
+    }
+  }
+}
+
+function handleBoxVisibilityChange(boxId, isVisible) {
+  let hidden = getHiddenBoxes();
+  if (!isVisible) {
+    if (!hidden.includes(boxId)) hidden.push(boxId);
+  } else {
+    hidden = hidden.filter(id => id !== boxId);
+  }
+  saveHiddenBoxes(hidden);
+  applySavedBoxVisibility();
+}
+
+function resetBoxVisibility() {
+  localStorage.removeItem('concretum_hidden_boxes');
+  document.querySelectorAll('.tab-btn, .tab-content, [id^="grid-card-"]').forEach(el => {
+    el.classList.remove('hidden');
+  });
+  document.querySelectorAll('.box-visibility-cb').forEach(cb => {
+    cb.checked = true;
+  });
+  if (activeBoxId) switchTab(activeBoxId);
+  showToast('Alle Koffer eingeblendet', 'success');
+}
+
+// ==========================================
+// ALARM FORMATIERUNG & FILTERUNG
+// ==========================================
 
 function formatAlertText(boxName, boxId, title, message) {
   const rawMsg = message || '';
@@ -93,13 +278,13 @@ function formatAlertText(boxName, boxId, title, message) {
     return { title: tmplTitle, message: tmplMsg };
   }
 
-  if (fullText.includes('trigger') || fullText.includes('disparo')) {
+  if (fullText.includes('trigger') || fullText.includes('disparo') || fullText.includes('abbindebeginn')) {
     const chMatch = rawMsg.match(/kanal\s*(\d+)|channel\s*(\d+)|canal\s*(\d+)/i);
     const chNum = chMatch ? (chMatch[1] || chMatch[2] || chMatch[3]) : '1';
     const tempMatch = rawMsg.match(/([\d.]+)\s*°?c/i);
     const tempVal = tempMatch ? tempMatch[1] : '--';
-    const tmplTitle = t('alarms.events.trigger_title', 'TRIGGER-TEMPERATUR ERREICHT');
-    const tmplMsg = t('alarms.events.trigger_msg', 'Trigger-Temperatur an {name} ({id}) auf Kanal {ch} erreicht ({temp}°C).')
+    const tmplTitle = t('alarms.events.trigger_title', 'ABB кар-BEGINN ERREICHT');
+    const tmplMsg = t('alarms.events.trigger_msg', 'Abbindebeginn an {name} ({id}) auf Kanal {ch} registriert ({temp}°C).')
       .replace('{name}', boxName || boxId || 'Box')
       .replace('{id}', boxId || '')
       .replace('{ch}', chNum)
@@ -120,6 +305,10 @@ function formatAlertText(boxName, boxId, title, message) {
 
   return { title: title || '', message: rawMsg };
 }
+
+// ==========================================
+// VIEW MODES & TABS
+// ==========================================
 
 function setDashboardViewMode(mode) {
   currentDashboardMode = mode;
@@ -147,6 +336,211 @@ function openBoxTab(boxId) {
   switchTab(boxId);
 }
 
+function switchTab(boxId) {
+  if (!boxId) return;
+  
+  window.ACTIVE_BOX_ID = boxId;
+  activeBoxId = boxId;
+  localStorage.setItem('concretum_active_box', boxId);
+
+  document.querySelectorAll('.tab-content').forEach(el => {
+    el.classList.add('hidden');
+  });
+
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.classList.remove('bg-slate-800', 'text-white');
+    btn.classList.add('bg-slate-900', 'text-slate-400');
+  });
+
+  const targetContent = document.getElementById(`tab-content-${boxId}`);
+  const targetBtn = document.getElementById(`tab-btn-${boxId}`);
+
+  if (targetContent) targetContent.classList.remove('hidden');
+  if (targetBtn) {
+    targetBtn.classList.add('bg-slate-800', 'text-white');
+    targetBtn.classList.remove('bg-slate-900', 'text-slate-400');
+  }
+
+  if (typeof loadArchiveFiles === 'function') {
+    loadArchiveFiles(boxId);
+  }
+  if (activeSubTab === 'quick_table') {
+    loadWidgetData(boxId);
+  } else if (activeSubTab === 'meta') {
+    loadChannelMetadata(boxId);
+  }
+}
+
+function switchSubTab(boxId, tabKey) {
+  activeSubTab = tabKey;
+  ['control', 'quick_table', 'meta'].forEach(k => {
+    const content = document.getElementById(`subtab-content-${boxId}-${k}`);
+    const btn = document.getElementById(`subtab-btn-${boxId}-${k}`);
+    if (content) content.classList.add('hidden');
+    if (btn) {
+      btn.classList.remove('bg-slate-800', 'text-white', 'border-slate-700');
+      btn.classList.add('bg-slate-900', 'text-slate-400', 'border-slate-800');
+    }
+  });
+
+  const activeContent = document.getElementById(`subtab-content-${boxId}-${tabKey}`);
+  const activeBtn = document.getElementById(`subtab-btn-${boxId}-${tabKey}`);
+  if (activeContent) activeContent.classList.remove('hidden');
+  if (activeBtn) {
+    activeBtn.classList.remove('bg-slate-900', 'text-slate-400', 'border-slate-800');
+    activeBtn.classList.add('bg-slate-800', 'text-white', 'border-slate-700');
+  }
+
+  if (tabKey === 'quick_table') {
+    loadWidgetData(boxId);
+  } else if (tabKey === 'meta') {
+    loadChannelMetadata(boxId);
+  }
+}
+
+// ==========================================
+// INTERAKTIVE PHASEN- & ZEITSTEUERUNG (DEV-28)
+// ==========================================
+
+async function triggerSettingNow(boxId, chNum, btn) {
+  const orig = btn.innerText;
+  btn.innerText = "⏳";
+  btn.disabled = true;
+
+  try {
+    const res = await fetch('/api/channel/trigger-setting-now', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ box_id: boxId, channel: chNum })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast('Abbindebeginn manuell gesetzt!', 'success');
+      fetchData();
+    } else {
+      showToast(data.error || 'Fehler beim Setzen des Abbindebeginns', 'error');
+    }
+  } catch (e) {
+    showToast('Netzwerkfehler', 'error');
+  } finally {
+    btn.innerText = orig;
+    btn.disabled = false;
+  }
+}
+
+function openTimeAdjustModal(boxId, chNum, eventType, chLabel) {
+  activeModalContext = {
+    boxId: boxId,
+    channel: chNum,
+    eventType: eventType,
+    currentTimestamp: new Date()
+  };
+
+  const titleMap = {
+    'start': 'Startzeitpunkt anpassen',
+    'turnaround': 'Wendepunkt (Min) anpassen',
+    'trigger': 'Abbindebeginn (Setting) anpassen'
+  };
+
+  const modal = document.getElementById('modal-time-adjust');
+  const elTitle = document.getElementById('modal-adjust-title');
+  const elSubtitle = document.getElementById('modal-adjust-subtitle');
+  const input = document.getElementById('modal-adjust-input');
+
+  if (elTitle) elTitle.innerText = titleMap[eventType] || 'Zeit anpassen';
+  if (elSubtitle) elSubtitle.innerText = `${boxId} &bull; Kanal ${chNum + 1} (${chLabel || 'temp' + chNum})`;
+
+  // Aktuellen Phasen-Zeitstempel aus dem Live-Cache laden
+  let initDate = new Date();
+  if (liveCacheData && liveCacheData.boxes && liveCacheData.boxes[boxId]) {
+    const phases = liveCacheData.boxes[boxId].channel_phases;
+    const chKey = `temp${chNum}`;
+    if (phases && phases[chKey] && phases[chKey][eventType]) {
+      initDate = new Date(phases[chKey][eventType]);
+    }
+  }
+
+  activeModalContext.currentTimestamp = initDate;
+  if (input) {
+    input.value = formatDateForInput(initDate);
+  }
+
+  if (modal) modal.classList.remove('hidden');
+}
+
+function closeTimeAdjustModal() {
+  const modal = document.getElementById('modal-time-adjust');
+  if (modal) modal.classList.add('hidden');
+}
+
+function formatDateForInput(date) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const yr = date.getFullYear();
+  const mo = pad(date.getMonth() + 1);
+  const da = pad(date.getDate());
+  const ho = pad(date.getHours());
+  const mi = pad(date.getMinutes());
+  const se = pad(date.getSeconds());
+  return `${yr}-${mo}-${da}T${ho}:${mi}:${se}`;
+}
+
+function adjustModalTimeDelta(seconds) {
+  const input = document.getElementById('modal-adjust-input');
+  if (!input || !input.value) return;
+
+  const cur = new Date(input.value);
+  if (isNaN(cur.getTime())) return;
+
+  cur.setSeconds(cur.getSeconds() + seconds);
+  activeModalContext.currentTimestamp = cur;
+  input.value = formatDateForInput(cur);
+}
+
+function setModalTimeToNow() {
+  const input = document.getElementById('modal-adjust-input');
+  const now = new Date();
+  activeModalContext.currentTimestamp = now;
+  if (input) input.value = formatDateForInput(now);
+}
+
+async function saveAdjustedTime() {
+  const input = document.getElementById('modal-adjust-input');
+  if (!input || !input.value) return;
+
+  const targetDate = new Date(input.value);
+  if (isNaN(targetDate.getTime())) {
+    showToast('Ungültiges Datumsformat', 'error');
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/channel/override-timestamp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        box_id: activeModalContext.boxId,
+        channel: activeModalContext.channel,
+        event_type: activeModalContext.eventType,
+        new_timestamp: targetDate.toISOString()
+      })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast('Zeitpunkt erfolgreich korrigiert!', 'success');
+      closeTimeAdjustModal();
+      fetchData();
+    } else {
+      showToast(data.error || 'Fehler beim Speichern', 'error');
+    }
+  } catch (e) {
+    showToast('Netzwerkfehler', 'error');
+  }
+}
+
+// ==========================================
+// WIDGET TELEMETRIE & CHART
+// ==========================================
+
 function initWidgetState(boxId) {
   if (!widgetState[boxId]) {
     const count = parseInt(channelCounts[boxId] || 4);
@@ -154,7 +548,7 @@ function initWidgetState(boxId) {
     for (let i = 0; i < count; i++) {
       initialChannels.push(i);
     }
-    initialChannels.push(100); // Umgebung
+    initialChannels.push(100);
 
     widgetState[boxId] = {
       range: 15,
@@ -237,7 +631,6 @@ async function loadWidgetData(boxId) {
     const resData = await res.json();
     const rows = resData.series || [];
 
-    // Sortierte Kanalliste für konsistente Spalten- und Dataset-Reihenfolge
     const sortedChannels = Array.from(state.selectedChannels).sort((a, b) => {
       if (a === 100) return 1;
       if (b === 100) return -1;
@@ -264,7 +657,6 @@ async function loadWidgetData(boxId) {
             let cols = `<td class="py-1.5 px-2 text-slate-400 whitespace-nowrap">${r.time}</td>`;
             sortedChannels.forEach(ch => {
               const val = r[`ch_${ch}`];
-              // Optimiert für Mobile: 1 Nachkommastelle, ohne °C
               cols += `<td class="py-1.5 px-2 font-mono">${val != null ? Number(val).toFixed(1) : '--'}</td>`;
             });
             return `<tr class="border-b border-slate-800/40">${cols}</tr>`;
@@ -349,76 +741,6 @@ async function loadWidgetData(boxId) {
   }
 }
 
-// ==============================================================================
-// TAB PERSISTENZ & SWITCHING
-// ==============================================================================
-
-window.ACTIVE_BOX_ID = localStorage.getItem('concretum_active_box') || window.INITIAL_BOX_ID || '';
-
-function switchTab(boxId) {
-  if (!boxId) return;
-  
-  window.ACTIVE_BOX_ID = boxId;
-  activeBoxId = boxId;
-  localStorage.setItem('concretum_active_box', boxId);
-
-  document.querySelectorAll('.tab-content').forEach(el => {
-    el.classList.add('hidden');
-  });
-
-  document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.classList.remove('bg-slate-800', 'text-white');
-    btn.classList.add('bg-slate-900', 'text-slate-400');
-  });
-
-  const targetContent = document.getElementById(`tab-content-${boxId}`);
-  const targetBtn = document.getElementById(`tab-btn-${boxId}`);
-
-  if (targetContent) {
-    targetContent.classList.remove('hidden');
-  }
-  if (targetBtn) {
-    targetBtn.classList.add('bg-slate-800', 'text-white');
-    targetBtn.classList.remove('bg-slate-900', 'text-slate-400');
-  }
-
-  if (typeof loadArchiveFiles === 'function') {
-    loadArchiveFiles(boxId);
-  }
-  if (activeSubTab === 'quick_table') {
-    loadWidgetData(boxId);
-  } else if (activeSubTab === 'meta') {
-    loadChannelMetadata(boxId);
-  }
-}
-
-function switchSubTab(boxId, tabKey) {
-  activeSubTab = tabKey;
-  ['control', 'quick_table', 'meta'].forEach(k => {
-    const content = document.getElementById(`subtab-content-${boxId}-${k}`);
-    const btn = document.getElementById(`subtab-btn-${boxId}-${k}`);
-    if (content) content.classList.add('hidden');
-    if (btn) {
-      btn.classList.remove('bg-slate-800', 'text-white', 'border-slate-700');
-      btn.classList.add('bg-slate-900', 'text-slate-400', 'border-slate-800');
-    }
-  });
-
-  const activeContent = document.getElementById(`subtab-content-${boxId}-${tabKey}`);
-  const activeBtn = document.getElementById(`subtab-btn-${boxId}-${tabKey}`);
-  if (activeContent) activeContent.classList.remove('hidden');
-  if (activeBtn) {
-    activeBtn.classList.remove('bg-slate-900', 'text-slate-400', 'border-slate-800');
-    activeBtn.classList.add('bg-slate-800', 'text-white', 'border-slate-700');
-  }
-
-  if (tabKey === 'quick_table') {
-    loadWidgetData(boxId);
-  } else if (tabKey === 'meta') {
-    loadChannelMetadata(boxId);
-  }
-}
-
 // ==========================================
 // KANAL-METADATEN (LABOR & FILEMAKER)
 // ==========================================
@@ -444,6 +766,10 @@ async function updateRecipeDropdown(boxId, chNum) {
   const recipeSelect = document.getElementById(`meta-recipe-${boxId}-${chNum}`);
   
   if (!locEl || !ifaceEl || !recipeSelect) return;
+
+  if (recipeSelect.tagName.toLowerCase() === 'input') {
+    return; // Rezept-ID als Text-Eingabefeld (DEV-31 Vorbereitung)
+  }
 
   const loc = locEl.value;
   const iface = ifaceEl.value;
@@ -521,7 +847,7 @@ async function saveChannelMeta(boxId, chNum, btn) {
     location: document.getElementById(`meta-loc-${boxId}-${chNum}`).value,
     interface: document.getElementById(`meta-iface-${boxId}-${chNum}`).value,
     custom_string: document.getElementById(`meta-custom-${boxId}-${chNum}`).value.trim(),
-    recipe_id: document.getElementById(`meta-recipe-${boxId}-${chNum}`).value,
+    recipe_id: document.getElementById(`meta-recipe-${boxId}-${chNum}`).value.trim(),
     cement_name: document.getElementById(`meta-cname-${boxId}-${chNum}`).value,
     cement_id: document.getElementById(`meta-cid-${boxId}-${chNum}`).value
   };
@@ -541,6 +867,10 @@ async function saveChannelMeta(boxId, chNum, btn) {
     btn.disabled = false;
   }
 }
+
+// ==========================================
+// EXPORTE & ARCHIV
+// ==========================================
 
 async function loadArchiveFiles(boxId) {
   const fileBox = document.getElementById(`files-${boxId}`);
@@ -571,6 +901,10 @@ async function loadArchiveFiles(boxId) {
     console.error("Archive Files Error", e);
   }
 }
+
+// ==========================================
+// HARDWARE TOGGLES & COMMANDS
+// ==========================================
 
 async function toggleNtfy(boxId, isEnabled) {
   try {
@@ -646,7 +980,11 @@ function closeImageModal() {
 }
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closeImageModal();
+  if (e.key === 'Escape') {
+    closeImageModal();
+    closeTimeAdjustModal();
+    closeAdminAuthModal();
+  }
 });
 
 async function saveAllChannelLabels(boxId, channelCount) {
@@ -725,11 +1063,25 @@ async function clearTriggers() {
 function showToast(msg, type) {
   const toast = document.getElementById('toast');
   toast.innerText = msg;
-  toast.className = `fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2.5 rounded-lg text-xs font-semibold shadow-xl border transition-opacity duration-200 z-50 ${
+  toast.className = `fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2.5 rounded-lg text-xs font-semibold shadow-xl border transition-opacity duration-200 z-50 font-mono ${
     type === 'success' ? 'bg-emerald-900 border-emerald-700 text-emerald-200' : 'bg-rose-900 border-rose-700 text-rose-200'
   } opacity-100`;
   setTimeout(() => { toast.classList.add('opacity-0'); }, 2500);
 }
+
+function formatIsoTime(isoStr) {
+  if (!isoStr) return '--:--:--';
+  try {
+    const dt = new Date(isoStr);
+    return dt.toLocaleTimeString('de-CH', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  } catch (e) {
+    return '--:--:--';
+  }
+}
+
+// ==========================================
+// LIVE-DATA POLLING LOOP
+// ==========================================
 
 async function fetchData() {
   try {
@@ -809,6 +1161,40 @@ async function fetchData() {
         }
       }
 
+      // Phasen-Timeline Zeiten und Statusbadges aktualisieren
+      if (bdata.channel_phases) {
+        for (const [chid, phases] of Object.entries(bdata.channel_phases)) {
+          const elStart = document.getElementById(`phase-time-start-${bid}-${chid}`);
+          const elTurn = document.getElementById(`phase-time-turnaround-${bid}-${chid}`);
+          const elTrig = document.getElementById(`phase-time-trigger-${bid}-${chid}`);
+
+          if (elStart) elStart.innerText = formatIsoTime(phases.start);
+          if (elTurn) elTurn.innerText = formatIsoTime(phases.turnaround);
+          if (elTrig) elTrig.innerText = formatIsoTime(phases.trigger);
+
+          const chipStart = document.getElementById(`phase-start-${bid}-${chid}`);
+          const chipTurn = document.getElementById(`phase-turnaround-${bid}-${chid}`);
+          const chipTrig = document.getElementById(`phase-trigger-${bid}-${chid}`);
+
+          if (chipStart) {
+            chipStart.className = `p-1 rounded border transition cursor-pointer ${
+              phases.start ? 'bg-emerald-950/60 border-emerald-700/80 text-emerald-200' : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-sky-500'
+            }`;
+          }
+          if (chipTurn) {
+            chipTurn.className = `p-1 rounded border transition cursor-pointer ${
+              phases.turnaround ? 'bg-amber-950/60 border-amber-700/80 text-amber-200' : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-amber-500'
+            }`;
+          }
+          if (chipTrig) {
+            chipTrig.className = `p-1 rounded border transition cursor-pointer ${
+              phases.trigger ? 'bg-rose-950/60 border-rose-700/80 text-rose-200' : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-rose-500'
+            }`;
+          }
+        }
+      }
+
+      // Grid-Ansicht Karten
       const gDot = document.getElementById(`grid-dot-${bid}`);
       if (gDot) gDot.className = `w-2 h-2 rounded-full ${bdata.online ? 'bg-emerald-400' : 'bg-rose-500'}`;
 
@@ -819,15 +1205,6 @@ async function fetchData() {
           bdata.online ? 'bg-emerald-950 text-emerald-400 border-emerald-800' : 'bg-rose-950 text-rose-400 border-rose-800'
         }`;
       }
-
-      const gPend = document.getElementById(`grid-pending-pill-${bid}`);
-      if (gPend) gPend.innerText = `${t('box.buffer', 'Puffer')}: ${bdata.pending_count || 0}`;
-
-      const gAmb = document.getElementById(`grid-val-ambient-${bid}`);
-      if (gAmb) gAmb.innerText = bdata.ambient != null ? `${bdata.ambient.toFixed(1)} °C` : '--.- °C';
-
-      const gHum = document.getElementById(`grid-val-humidity-${bid}`);
-      if (gHum) gHum.innerText = bdata.humidity != null ? `${bdata.humidity.toFixed(1)} %` : '--.- %';
 
       if (bdata.channel_temps) {
         for (const [chid, cval] of Object.entries(bdata.channel_temps)) {
@@ -848,6 +1225,7 @@ async function fetchData() {
         }
       }
 
+      // Synchronisation der Kippschalter
       const swLog = document.getElementById(`switch-logging-${bid}`);
       if (swLog && bdata.channel_recording_enabled !== undefined) swLog.checked = bdata.channel_recording_enabled;
 
@@ -874,6 +1252,8 @@ async function fetchData() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  applySavedBoxVisibility();
+
   const saved = localStorage.getItem('concretum_active_box');
   let targetId = (saved && document.getElementById(`tab-content-${saved}`)) ? saved : '';
   
@@ -891,6 +1271,17 @@ document.addEventListener('DOMContentLoaded', () => {
     window.ACTIVE_BOX_ID = targetId;
     switchTab(targetId);
   }
+
+  fetch('/api/auth/status')
+    .then(r => r.json())
+    .then(data => {
+      window.IS_ADMIN = Boolean(data.is_admin);
+      const logoutBtn = document.getElementById('btn-admin-logout');
+      if (logoutBtn && window.IS_ADMIN) {
+        logoutBtn.classList.remove('hidden');
+      }
+    })
+    .catch(() => {});
 
   fetchData();
   setInterval(fetchData, 20000);

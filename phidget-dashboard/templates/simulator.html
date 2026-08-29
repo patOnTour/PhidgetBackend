@@ -1,8 +1,9 @@
 <!--
 @file: simulator.html
-@version: 2.8.0
-@date: 2026-08-28
-@description: Setting Simulator Template mit synchronisierter Versions-Plakette im Header und Cache-Busting v=2.8.0.
+@version: 2.9.0
+@date: 2026-08-29
+@description: Zentrale Sensorik- und Tuning-Engine mit Einstich-, Wendepunkt- und Setting-Schwellenwerten,
+              kontextuellen Parameter-Tooltips und Hamburger-Menue (DEV-28).
 @author: Patrick Staehli
 -->
 <!DOCTYPE html>
@@ -10,31 +11,69 @@
 <head>
   <meta charset="UTF-8">
   <title>Concretum - Setting Simulator & Tuning Engine</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=2.8.0">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=2.0.0">
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans">
 
   <!-- Header -->
-  <header class="bg-slate-900 border-b border-slate-800 px-6 py-4 flex items-center justify-between shadow-lg flex-wrap gap-3">
+  <header class="bg-slate-900 border-b border-slate-800 px-6 py-4 flex items-center justify-between shadow-lg flex-wrap gap-3 relative">
     <div class="flex items-center gap-3">
       <span class="text-2xl">🧪</span>
       <div>
         <div class="flex items-center gap-2">
           <h1 class="text-lg font-bold text-sky-400">Setting Simulator & Parameter-Tuning</h1>
           <span id="versionBadge" class="bg-slate-800 border border-slate-700 text-slate-400 text-[10px] font-mono px-2 py-0.5 rounded">
-            HTML v2.8.0 &bull; <span id="jsVersionDisplay">JS lädt...</span>
+            v2.9.0 &bull; <span id="jsVersionDisplay">JS lädt...</span>
           </span>
         </div>
-        <p class="text-xs text-slate-400">Post-Analyse, Schwellwert-Optimierung und Report-Generator</p>
+        <p class="text-xs text-slate-400">Post-Analyse, Sensorik-Schwellwert-Optimierung und Report-Generator</p>
       </div>
     </div>
+
     <div class="flex items-center gap-3">
-      <a href="/" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition">← Dashboard</a>
-      <a href="/history" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition">History</a>
-      <a href="/config" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition">Konfiguration</a>
+      <a href="/" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition font-mono">← Dashboard</a>
+      
+      <!-- Hamburger Menue ("BigMac") -->
+      <div class="relative">
+        <button type="button" id="btn-hamburger" onclick="toggleHamburgerMenu()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 p-1.5 rounded-lg border border-slate-700 transition flex items-center justify-center w-8 h-8 focus:outline-none">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+          </svg>
+        </button>
+
+        <!-- Dropdown Menue Items -->
+        <div id="hamburger-menu" class="hidden absolute right-0 mt-2 w-52 bg-slate-900 border border-slate-800 rounded-xl py-2 shadow-2xl z-50 font-mono text-xs divide-y divide-slate-800">
+          <div class="py-1">
+            <a href="/" class="flex items-center gap-2 px-4 py-2 text-slate-300 hover:bg-slate-800 hover:text-white transition">
+              <span>🏠</span> Dashboard
+            </a>
+            <a href="/history" class="flex items-center gap-2 px-4 py-2 text-slate-300 hover:bg-slate-800 hover:text-white transition">
+              <span>📊</span> Verlauf & Export
+            </a>
+          </div>
+          <div class="py-1">
+            <a href="/config" class="flex items-center justify-between px-4 py-2 text-slate-300 hover:bg-slate-800 hover:text-white transition">
+              <span class="flex items-center gap-2"><span>⚙️</span> Konfiguration</span>
+            </a>
+            <a href="/simulator" class="flex items-center justify-between px-4 py-2 text-white bg-slate-800/50 hover:bg-slate-800 transition">
+              <span class="flex items-center gap-2"><span>🧪</span> Simulator & Sensorik</span>
+              <span class="text-[10px] text-emerald-400">Aktiv</span>
+            </a>
+          </div>
+          <div class="py-1">
+            <a href="/manual" class="flex items-center gap-2 px-4 py-2 text-slate-400 hover:bg-slate-800 hover:text-white transition">
+              <span>📖</span> Handbuch
+            </a>
+            <button type="button" onclick="performAdminLogout()" class="w-full text-left flex items-center gap-2 px-4 py-2 text-rose-400 hover:bg-slate-800 transition">
+              <span>🚪</span> Admin Logout
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   </header>
 
@@ -47,14 +86,14 @@
       <!-- 1. Datenquelle -->
       <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
         <h2 class="text-sm font-bold text-slate-200 mb-3 flex items-center gap-2">
-          <span>📂</span> 1. Datenquelle wählen
+          <span>📂</span> 1. Datenquelle & Profil wählen
         </h2>
         
         <div class="space-y-4">
           <!-- Koffer-Presets -->
           <div>
             <label class="text-xs text-slate-400 font-semibold block mb-1">Ziel-Koffer (YAML-Profil)</label>
-            <select id="selBox" class="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-slate-200 focus:border-sky-500 outline-none">
+            <select id="selBox" onchange="loadBoxProfileParams(this.value)" class="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-xs text-slate-200 focus:border-sky-500 outline-none font-mono">
               {% for b in boxes %}
                 <option value="{{ b.yaml_key or b.id }}">{{ b.name }} ({{ b.id }})</option>
               {% endfor %}
@@ -64,10 +103,10 @@
           <!-- CSV Upload -->
           <div>
             <label class="text-xs text-slate-400 font-semibold block mb-1">CSV-Exportdatei hochladen</label>
-            <input type="file" id="csvFile" accept=".csv" class="w-full text-xs text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-sky-950 file:text-sky-300 hover:file:bg-sky-900 cursor-pointer">
+            <input type="file" id="csvFile" accept=".csv" class="w-full text-xs text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-sky-950 file:text-sky-300 hover:file:bg-sky-900 cursor-pointer font-mono">
           </div>
 
-          <button id="btnRun" onclick="runSimulation()" class="w-full py-2 bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold rounded-lg shadow-md transition">
+          <button id="btnRun" onclick="runSimulation()" class="w-full py-2 bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold rounded-lg shadow-md transition font-mono">
             🚀 Analyse berechnen
           </button>
         </div>
@@ -79,52 +118,103 @@
           <span>⚙️</span> 2. Schwellenwerte anpassen
         </h2>
 
+        <!-- Einstich-Erkennung (Probe Detection) -->
+        <div class="space-y-2 border-t border-slate-800 pt-3">
+          <span class="text-xs font-bold text-purple-400 uppercase tracking-wider block">1. Einstich-Erkennung (Probe)</span>
+          <div class="grid grid-cols-1 gap-2 text-xs">
+            <div>
+              <div class="flex items-center justify-between mb-0.5">
+                <label class="text-[10px] text-slate-400">Min. Delta T (°C / 60s)</label>
+                <span class="info-tooltip-trigger" data-tip="Mindesterwaermung innerhalb von 60s nach Einstich. Faustwert: 0.80 °C.">ⓘ</span>
+              </div>
+              <input type="number" id="pd_delta_t_min" value="0.80" step="0.05" class="w-full bg-slate-950 border border-slate-700 rounded p-1.5 text-slate-200 font-mono">
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <div class="flex items-center justify-between mb-0.5">
+                  <label class="text-[10px] text-slate-400">Min. Steigung (°C/s)</label>
+                  <span class="info-tooltip-trigger" data-tip="Mindest-Temperaturanstieg pro Sekunde. Richtwert: 0.015 °C/s.">ⓘ</span>
+                </div>
+                <input type="number" id="pd_slope_min" value="0.015" step="0.001" class="w-full bg-slate-950 border border-slate-700 rounded p-1.5 text-slate-200 font-mono">
+              </div>
+              <div>
+                <div class="flex items-center justify-between mb-0.5">
+                  <label class="text-[10px] text-slate-400">Rotations-Peak (|T''|)</label>
+                  <span class="info-tooltip-trigger" data-tip="Kruemmungsschwelle der 2. Ableitung beim Kontakt. Richtwert: 0.035.">ⓘ</span>
+                </div>
+                <input type="number" id="pd_rot_peak_min" value="0.035" step="0.005" class="w-full bg-slate-950 border border-slate-700 rounded p-1.5 text-slate-200 font-mono">
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Wendepunkt-Erkennung -->
         <div class="space-y-2 border-t border-slate-800 pt-3">
-          <span class="text-xs font-bold text-emerald-400 uppercase tracking-wider block">Wendepunkt (Turnaround)</span>
+          <span class="text-xs font-bold text-emerald-400 uppercase tracking-wider block">2. Wendepunkt (Turnaround)</span>
           <div class="grid grid-cols-2 gap-2 text-xs">
             <div>
-              <label class="text-[10px] text-slate-400">SG-Fenster (Samples)</label>
-              <input type="number" id="td_sg_window" value="31" step="2" class="w-full bg-slate-950 border border-slate-700 rounded p-1.5 text-slate-200">
+              <div class="flex items-center justify-between mb-0.5">
+                <label class="text-[10px] text-slate-400">SG-Fenster (Samples)</label>
+                <span class="info-tooltip-trigger" data-tip="Savitzky-Golay Glaettungsfenster. Muss ungerade sein. Standard: 31 Punkte.">ⓘ</span>
+              </div>
+              <input type="number" id="td_sg_window" value="31" step="2" class="w-full bg-slate-950 border border-slate-700 rounded p-1.5 text-slate-200 font-mono">
             </div>
             <div>
-              <label class="text-[10px] text-slate-400">Min. Delta (°C)</label>
-              <input type="number" id="td_min_cooling_delta" value="0.20" step="0.05" class="w-full bg-slate-950 border border-slate-700 rounded p-1.5 text-slate-200">
+              <div class="flex items-center justify-between mb-0.5">
+                <label class="text-[10px] text-slate-400">Min. Delta (°C)</label>
+                <span class="info-tooltip-trigger" data-tip="Minimale Temperaturdifferenz vor dem Wiederanstieg. Standard: 0.20 °C.">ⓘ</span>
+              </div>
+              <input type="number" id="td_min_cooling_delta" value="0.20" step="0.05" class="w-full bg-slate-950 border border-slate-700 rounded p-1.5 text-slate-200 font-mono">
             </div>
             <div>
-              <label class="text-[10px] text-slate-400">Abkühl-Steigung</label>
-              <input type="number" id="td_cooling_slope_min" value="-0.0003" step="0.0001" class="w-full bg-slate-950 border border-slate-700 rounded p-1.5 text-slate-200">
+              <div class="flex items-center justify-between mb-0.5">
+                <label class="text-[10px] text-slate-400">Abkühl-Steigung</label>
+                <span class="info-tooltip-trigger" data-tip="Negative Mindeststeigung der Abkuehlphase. Standard: -0.0003 °C/s.">ⓘ</span>
+              </div>
+              <input type="number" id="td_cooling_slope_min" value="-0.0003" step="0.0001" class="w-full bg-slate-950 border border-slate-700 rounded p-1.5 text-slate-200 font-mono">
             </div>
             <div>
-              <label class="text-[10px] text-slate-400">Erwärm-Steigung</label>
-              <input type="number" id="td_reheating_slope_min" value="0.0003" step="0.0001" class="w-full bg-slate-950 border border-slate-700 rounded p-1.5 text-slate-200">
+              <div class="flex items-center justify-between mb-0.5">
+                <label class="text-[10px] text-slate-400">Erwärm-Steigung</label>
+                <span class="info-tooltip-trigger" data-tip="Positive Mindeststeigung des Wiederanstiegs. Standard: +0.0003 °C/s.">ⓘ</span>
+              </div>
+              <input type="number" id="td_reheating_slope_min" value="0.0003" step="0.0001" class="w-full bg-slate-950 border border-slate-700 rounded p-1.5 text-slate-200 font-mono">
             </div>
           </div>
         </div>
 
         <!-- Abbindebeginn-Trigger -->
         <div class="space-y-2 border-t border-slate-800 pt-3">
-          <span class="text-xs font-bold text-amber-400 uppercase tracking-wider block">Abbindebeginn (Trigger)</span>
+          <span class="text-xs font-bold text-amber-400 uppercase tracking-wider block">3. Abbindebeginn (Trigger)</span>
           <div class="grid grid-cols-2 gap-2 text-xs">
             <div>
-              <label class="text-[10px] text-slate-400">Lookback (Sek.)</label>
-              <input type="number" id="sd_lookback_sec" value="120" step="30" class="w-full bg-slate-950 border border-slate-700 rounded p-1.5 text-slate-200">
+              <div class="flex items-center justify-between mb-0.5">
+                <label class="text-[10px] text-slate-400">Lookback (Sek.)</label>
+                <span class="info-tooltip-trigger" data-tip="Betrachtungszeitfenster fuer die Kruemmungsanalyse. Standard: 120 Sekunden.">ⓘ</span>
+              </div>
+              <input type="number" id="sd_lookback_sec" value="120" step="30" class="w-full bg-slate-950 border border-slate-700 rounded p-1.5 text-slate-200 font-mono">
             </div>
             <div>
-              <label class="text-[10px] text-slate-400">Min. Beschleunigung</label>
-              <input type="number" id="sd_accel_min" value="0.000010" step="0.0000005" class="w-full bg-slate-950 border border-slate-700 rounded p-1.5 text-slate-200">
+              <div class="flex items-center justify-between mb-0.5">
+                <label class="text-[10px] text-slate-400">Min. Beschleunigung</label>
+                <span class="info-tooltip-trigger" data-tip="Mindest-Kruemmungswert d²T/dt² fuer den echten Reaktionskick. Standard: 0.000010.">ⓘ</span>
+              </div>
+              <input type="number" id="sd_accel_min" value="0.000010" step="0.0000005" class="w-full bg-slate-950 border border-slate-700 rounded p-1.5 text-slate-200 font-mono">
             </div>
             <div class="col-span-2">
-              <label class="text-[10px] text-slate-400">Min. Steigung (m)</label>
-              <input type="number" id="sd_slope_min" value="0.0002" step="0.0001" class="w-full bg-slate-950 border border-slate-700 rounded p-1.5 text-slate-200">
+              <div class="flex items-center justify-between mb-0.5">
+                <label class="text-[10px] text-slate-400">Min. Steigung (m)</label>
+                <span class="info-tooltip-trigger" data-tip="Mindestanstieg der Tangente bei detektiertem Abbindebeginn. Standard: 0.0002 °C/s.">ⓘ</span>
+              </div>
+              <input type="number" id="sd_slope_min" value="0.0002" step="0.0001" class="w-full bg-slate-950 border border-slate-700 rounded p-1.5 text-slate-200 font-mono">
             </div>
           </div>
         </div>
 
         <!-- Speichern ins YAML -->
         <div class="border-t border-slate-800 pt-4">
-          <button type="button" onclick="saveParamsToYaml(event)" class="w-full py-2 bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg transition shadow-md">
-            💾 In Koffer-YAML speichern
+          <button type="button" onclick="saveParamsToYaml(event)" class="w-full py-2 bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg transition shadow-md font-mono">
+            💾 Parameter in Koffer-YAML speichern
           </button>
         </div>
       </div>
@@ -134,36 +224,36 @@
     <!-- Rechter Bereich: Visualisierung & Post-Export -->
     <div class="xl:col-span-3 flex flex-col gap-6">
       
-      <!-- Kennzahlen-Leiste / Metrik-Karten -->
+      <!-- Kennzahlen-Leiste -->
       <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
         <div class="bg-slate-900 border border-slate-800 rounded-lg p-3">
           <div class="text-xs text-slate-400 font-medium">Wendepunkt (t_min)</div>
-          <div id="metricTurn" class="text-base font-bold text-sky-400 mt-1">Nicht erkannt</div>
+          <div id="metricTurn" class="text-base font-bold text-sky-400 mt-1 font-mono">Nicht erkannt</div>
         </div>
 
         <div class="bg-slate-900 border border-slate-800 rounded-lg p-3">
           <div class="text-xs text-slate-400 font-medium">Abbindebeginn (t_ab)</div>
-          <div id="metricTab" class="text-base font-bold text-rose-500 mt-1">Nicht erkannt</div>
+          <div id="metricTab" class="text-base font-bold text-rose-500 mt-1 font-mono">Nicht erkannt</div>
         </div>
 
         <div class="bg-slate-900 border border-slate-800 rounded-lg p-3">
           <div class="text-xs text-slate-400 font-medium">Triggertemperatur</div>
-          <div id="metricTempAb" class="text-base font-bold text-amber-400 mt-1">-</div>
+          <div id="metricTempAb" class="text-base font-bold text-amber-400 mt-1 font-mono">-</div>
         </div>
 
         <div class="bg-slate-900 border border-slate-800 rounded-lg p-3">
           <div class="text-xs text-slate-400 font-medium">Trigger-Typ</div>
-          <div id="metricTrigType" class="text-base font-bold text-emerald-400 mt-1">Warten</div>
+          <div id="metricTrigType" class="text-base font-bold text-emerald-400 mt-1 font-mono">Warten</div>
         </div>
 
         <div class="bg-slate-900 border border-slate-800 rounded-lg p-3 border-l-2 border-l-amber-500">
           <div class="text-xs text-amber-300 font-medium">ntfy Alarm-Uhrzeit</div>
-          <div id="metricNtfyTime" class="text-base font-bold text-amber-400 mt-1">Warten</div>
+          <div id="metricNtfyTime" class="text-base font-bold text-amber-400 mt-1 font-mono">Warten</div>
         </div>
 
         <div class="bg-slate-900 border border-slate-800 rounded-lg p-3 border-l-2 border-l-emerald-500">
           <div class="text-xs text-emerald-300 font-medium">Reaktionsverzug</div>
-          <div id="metricNtfyDelay" class="text-base font-bold text-emerald-400 mt-1">-</div>
+          <div id="metricNtfyDelay" class="text-base font-bold text-emerald-400 mt-1 font-mono">-</div>
         </div>
       </div>
 
@@ -171,7 +261,7 @@
       <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg flex-1 flex flex-col min-h-[550px]">
         <div class="flex items-center justify-between mb-3">
           <h2 class="text-sm font-bold text-slate-200">Interaktive Kurven- und Tangentenanalyse</h2>
-          <button onclick="generateNightReport()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-sky-400 text-xs font-bold rounded-lg border border-slate-700 transition">
+          <button onclick="generateNightReport()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-sky-400 text-xs font-bold rounded-lg border border-slate-700 transition font-mono">
             🖼️ PNG-Report exportieren
           </button>
         </div>
@@ -182,6 +272,8 @@
 
   </main>
 
-  <script src="{{ url_for('static', filename='js/simulator.js') }}?v=2.8.0"></script>
+  <div id="toast" class="fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2.5 rounded-lg text-xs font-semibold shadow-xl border transition-opacity duration-200 opacity-0 pointer-events-none z-50 font-mono"></div>
+
+  <script src="{{ url_for('static', filename='js/simulator.js') }}?v=2.9.0"></script>
 </body>
 </html>

@@ -10,10 +10,21 @@ baustellenkoffer_1:
   mac_lan: 00:1b:0b:10:3d:44
   mac_wlan: 1c:bf:ce:97:58:ea
   workstation: on Tour
+  auto_detection_enabled: false
+  turnaround_detection_enabled: false
+  channel_recording_enabled: true
+  ntfy_enabled: false
+  auto_reset_after_30m: true
+  channel_labels:
+    temp0: LKW1 BW
+    temp1: LKW1
+    temp2: LKW2
+    temp3: LKW3
+  channel_metadata: {}
   probe_detection:
     delta_t_min: 0.8
     slope_min: 0.015
-    rot_peak_min: 0.035
+    rot_peak_min: 0.05
   turnaround_detection:
     sg_window: 31
     cooling_slope_min: -0.0003
@@ -28,12 +39,3 @@ baustellenkoffer_1:
     slope_min: 0.0005
     fallback_samples: 5
     fallback_step_min: 0.015
-  channel_labels:
-    temp0: LKW1 BW
-    temp1: LKW1
-    temp2: LKW2
-    temp3: LKW3
-  auto_detection_enabled: false
-  turnaround_detection_enabled: false
-  channel_recording_enabled: true
-  ntfy_enabled: false

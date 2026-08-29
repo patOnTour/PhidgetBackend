@@ -10,10 +10,25 @@ dummy:
   mac_lan: null
   mac_wlan: null
   workstation: null
+  auto_detection_enabled: false
+  turnaround_detection_enabled: false
+  channel_recording_enabled: false
+  ntfy_enabled: false
+  auto_reset_after_30m: true
+  channel_labels:
+    temp0: B1 LKW1BW
+    temp1: B1 LKW1
+    temp2: B1 KLW2
+    temp3: B1 LKW3
+    temp4: B2 LKW1BW
+    temp5: B2 LKW1
+    temp6: B2 LKW2
+    temp7: B2 LKW3
+  channel_metadata: {}
   probe_detection:
-    delta_t_min: 0.8
-    slope_min: 0.015
-    rot_peak_min: 0.035
+    delta_t_min: 1.2
+    slope_min: 0.01
+    rot_peak_min: 0.005
   turnaround_detection:
     sg_window: 31
     cooling_slope_min: -0.0003
@@ -28,17 +43,3 @@ dummy:
     slope_min: 0.002
     fallback_samples: 5
     fallback_step_min: 0.02
-  channel_labels:
-    temp0: Dummy 1
-    temp1: Dummy 2
-    temp2: Kanal 3
-    temp3: Kanal 4
-    temp4: Kanal 5
-    temp5: Kanal 6
-    temp6: Kanal 7
-    temp7: Kanal 8
-  auto_detection_enabled: true
-  turnaround_detection_enabled: true
-  channel_recording_enabled: true
-  ntfy_enabled: true
-  auto_reset_after_30m: true

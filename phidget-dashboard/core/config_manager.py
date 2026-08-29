@@ -1,10 +1,10 @@
 """
 @file: core/config_manager.py
-@version: 1.0.0
+@version: 1.1.0
 @date: 2026-08-29
 @description: Zentraler Manager fuer Konfigurations- und Geraetedateien (YAML).
-              Implementiert Schema-Validierung, konsistente Pfadauflösung,
-              atomare Schreibzugriffe und File-Locking zur Vermeidung von Race Conditions.
+              Implementiert Schema-Validierung, konsistente Pfadaufloesung,
+              deterministische Sortierung, atomare Schreibzugriffe und File-Locking.
 @author: Patrick Staehli
 """
 
@@ -64,6 +64,7 @@ class DeviceConfig:
     ntfy_channel: str = "Concretum"
     timezone: str = "Europe/Zurich"
     channel_count: int = 4
+    order: int = 100
     serial: Optional[int] = None
     ip_lan: Optional[str] = None
     mac_lan: Optional[str] = None
@@ -194,7 +195,6 @@ class ConfigManager:
         payload = {yaml_key: data}
 
         try:
-            # Atomar via Tempfile im selben Verzeichnis (fuer os.replace auf demselben Filesystem)
             temp_fd, temp_path = tempfile.mkstemp(dir=self.devices_dir, prefix=f".{yaml_key}_", suffix=".tmp")
             with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
                 fcntl.flock(f.fileno(), fcntl.LOCK_EX)
@@ -232,7 +232,7 @@ class ConfigManager:
         return True
 
     def get_parsed_config(self) -> Dict[str, Any]:
-        """Bereitet alle Box-Konfigurationen konsistent fuer Webviews & Dashboards auf."""
+        """Bereitet alle Box-Konfigurationen in deterministischer Reihenfolge fuer Dashboards auf."""
         raw = self.load_all_raw()
         server_cfg = raw.get("Server", {})
 
@@ -256,6 +256,7 @@ class ConfigManager:
                 "id": dev_id,
                 "name": val.get("name", key),
                 "box_label": val.get("box_label", ""),
+                "order": int(val.get("order", 100)),
                 "topic": val.get("ntfy_channel", "Concretum"),
                 "timezone": val.get("timezone", server_cfg.get("timezone", "Europe/Zurich")),
                 "channel_count": ch_count,
@@ -276,6 +277,9 @@ class ConfigManager:
                 "channel_labels": custom_labels,
                 "channel_metadata": val.get("channel_metadata", {})
             })
+
+        # Deterministische Sortierung: Zuerst nach 'order', dann alphabetisch nach Anzeigename
+        boxes.sort(key=lambda b: (b.get("order", 100), str(b.get("name", "")).lower()))
 
         return {"server": server_cfg, "boxes": boxes}
 

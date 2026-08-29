@@ -1,9 +1,9 @@
 """
 @file: app.py
-@version: 2.4.0
+@version: 2.5.0
 @date: 2026-08-29
-@description: Dashboard App mit zentralisiertem ConfigManager (core/config_manager.py)
-              fuer atomare YAML-Operationen, Thread-/Prozess-Sicherheit, Metadata-APIs und Blueprints.
+@description: Dashboard App mit typsicherem Formular-Parsing, Admin-Auth-Gate fuer Config/Simulator,
+              Phasen-Timeline & Zeit-Override-Endpunkten und YAML-Persistenz via ConfigManager.
 @author: Patrick Staehli
 """
 
@@ -11,6 +11,7 @@ import os
 import re
 import yaml
 import psycopg2
+from functools import wraps
 from psycopg2.extras import RealDictCursor
 from datetime import datetime, timezone
 from flask import Flask, render_template, jsonify, request, send_from_directory, abort, session, redirect
@@ -29,6 +30,8 @@ DB_PORT = int(os.environ.get("DB_PORT", 5432))
 DB_NAME = os.environ.get("DB_NAME", "telemetry_db")
 DB_USER = os.environ.get("DB_USER", "postgres")
 DB_PASS = os.environ.get("DB_PASS", "")
+
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "secret123")
 
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
@@ -49,6 +52,39 @@ app.register_blueprint(history_bp)
 
 from routes.simulator import simulator_bp
 app.register_blueprint(simulator_bp)
+
+
+# ==========================================
+# AUTHENTIFIZIERUNG & ADMIN-GATE
+# ==========================================
+
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not session.get("is_admin"):
+            if request.path.startswith("/api/"):
+                return jsonify({"success": False, "error": "Unauthorized", "auth_required": True}), 401
+            return redirect("/?auth_required=true")
+        return f(*args, **kwargs)
+    return decorated_function
+
+@app.route("/api/auth/login", methods=["POST"])
+def auth_login():
+    data = request.get_json() or {}
+    password = data.get("password", "").strip()
+    if password == ADMIN_PASSWORD:
+        session["is_admin"] = True
+        return jsonify({"success": True})
+    return jsonify({"success": False, "error": "Ungueltiges Passwort"}), 401
+
+@app.route("/api/auth/logout", methods=["POST"])
+def auth_logout():
+    session.pop("is_admin", None)
+    return jsonify({"success": True})
+
+@app.route("/api/auth/status")
+def auth_status():
+    return jsonify({"is_admin": bool(session.get("is_admin", False))})
 
 
 # ==========================================
@@ -120,13 +156,14 @@ def translate_key(path, lang_code=None, default=""):
     return val if isinstance(val, str) else default
 
 @app.context_processor
-def inject_i18n():
+def inject_context():
     current_lang = get_current_language()
     return {
         "t": lambda key, default="": translate_key(key, current_lang, default),
         "current_lang": current_lang,
         "available_languages": get_available_languages(),
-        "translations_json": load_translations(current_lang)
+        "translations_json": load_translations(current_lang),
+        "is_admin": bool(session.get("is_admin", False))
     }
 
 
@@ -160,6 +197,7 @@ def index():
     return render_template("index.html", boxes=cfg["boxes"], config=cfg)
 
 @app.route("/config")
+@admin_required
 def config_page():
     cfg = config_manager.get_parsed_config()
     return render_template(
@@ -290,7 +328,7 @@ def save_channel_metadata():
         conn.close()
 
 # ==========================================
-# API ENDPOINTS
+# API ENDPOINTS & LIVE TELEMETRY
 # ==========================================
 
 @app.route("/api/live-data")
@@ -314,6 +352,7 @@ def live_data():
             "channel_temps": {},
             "channel_states": {ch["id"]: "RESET" for ch in box["channels"]},
             "channel_starts_ms": {},
+            "channel_phases": {ch["id"]: {"start": None, "turnaround": None, "trigger": None} for ch in box["channels"]},
             "last_message": None,
             "channel_recording_enabled": box.get("channel_recording_enabled", True),
             "auto_detection_enabled": box.get("auto_detection_enabled", False),
@@ -382,7 +421,8 @@ def live_data():
                         boxes_status[bid]["last_seen"] = ls_time.strftime("%H:%M:%S")
 
                 cur.execute("""
-                    SELECT device_id, channel, turnaround_sent, trigger_sent, export_120_sent, started_at 
+                    SELECT device_id, channel, turnaround_sent, trigger_sent, export_120_sent, 
+                           started_at, turnaround_time, trigger_time
                     FROM analyzer_state 
                     WHERE device_id = ANY(%s);
                 """, (all_dev_ids,))
@@ -391,6 +431,7 @@ def live_data():
                     if bid not in boxes_status:
                         continue
                     ch_key = f"temp{ast['channel']}"
+                    
                     if not ast.get("started_at"):
                         state_str = "RESET"
                     elif ast.get("export_120_sent"):
@@ -401,12 +442,22 @@ def live_data():
                         state_str = "TURNING"
                     else:
                         state_str = "RUNNING"
+                        
                     boxes_status[bid]["channel_states"][ch_key] = state_str
-                    if ast.get("started_at"):
-                        st_dt = ast["started_at"]
-                        if st_dt.tzinfo is None:
-                            st_dt = st_dt.replace(tzinfo=timezone.utc)
+                    
+                    st_dt = ast.get("started_at")
+                    ta_dt = ast.get("turnaround_time")
+                    tr_dt = ast.get("trigger_time")
+                    
+                    if st_dt:
+                        if st_dt.tzinfo is None: st_dt = st_dt.replace(tzinfo=timezone.utc)
                         boxes_status[bid]["channel_starts_ms"][ch_key] = int(st_dt.timestamp() * 1000)
+
+                    boxes_status[bid]["channel_phases"][ch_key] = {
+                        "start": st_dt.isoformat() if st_dt else None,
+                        "turnaround": ta_dt.isoformat() if ta_dt else None,
+                        "trigger": tr_dt.isoformat() if tr_dt else None
+                    }
 
                 cur.execute("""
                     SELECT DISTINCT ON (device_id) device_id, title, message, event_time 
@@ -611,11 +662,142 @@ def update_channel_labels_batch():
         return jsonify({"success": True})
     return jsonify({"success": False, "error": "Fehler beim Speichern der YAML"}), 500
 
+
+# ==========================================
+# INTERAKTIVE PHASEN- & ZEITSTEUERUNG (DEV-28)
+# ==========================================
+
+@app.route("/api/channel/trigger-setting-now", methods=["POST"])
+def trigger_setting_now():
+    """Loest manuell den Abbindebeginn (Setting) fuer einen Kanal aus."""
+    data = request.get_json() or {}
+    box_id = str(data.get("box_id", "")).strip()
+    channel = int(data.get("channel", 0))
+    job_id = f"ch{channel}"
+
+    if not box_id:
+        return jsonify({"success": False, "error": "box_id erforderlich"}), 400
+
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({"success": False, "error": "Keine DB-Verbindung"}), 500
+
+    now = datetime.now(timezone.utc)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT started_at, turnaround_sent FROM analyzer_state
+                WHERE device_id = %s AND channel = %s;
+            """, (box_id, channel))
+            row = cur.fetchone()
+
+            if not row or not row.get("started_at"):
+                # Kanal war noch nicht gestartet -> Start und Setting gleichzeitig setzen
+                cur.execute("""
+                    INSERT INTO analyzer_state (
+                        device_id, channel, job_id, started_at, turnaround_sent, 
+                        turnaround_time, trigger_sent, trigger_time
+                    )
+                    VALUES (%s, %s, %s, %s, TRUE, %s, TRUE, %s)
+                    ON CONFLICT (device_id, channel, job_id) DO UPDATE SET
+                        started_at = COALESCE(analyzer_state.started_at, EXCLUDED.started_at),
+                        turnaround_sent = TRUE,
+                        turnaround_time = COALESCE(analyzer_state.turnaround_time, EXCLUDED.turnaround_time),
+                        trigger_sent = TRUE,
+                        trigger_time = EXCLUDED.trigger_time;
+                """, (box_id, channel, job_id, now, now, now))
+            else:
+                cur.execute("""
+                    UPDATE analyzer_state
+                    SET trigger_sent = TRUE,
+                        trigger_time = %s,
+                        turnaround_sent = TRUE,
+                        turnaround_time = COALESCE(turnaround_time, %s)
+                    WHERE device_id = %s AND channel = %s;
+                """, (now, now, box_id, channel))
+
+            # Manuellen Alert in der History protokollieren
+            cur.execute("""
+                INSERT INTO alerts_history (device_id, channel, event_type, event_time, title, message, acknowledged)
+                VALUES (%s, %s, 'SETTING_MANUAL', %s, 'Manueller Abbindebeginn', %s, FALSE);
+            """, (box_id, channel, now, f"Abbindebeginn auf Kanal {channel} manuell im Dashboard bestaetigt."))
+
+            conn.commit()
+        return jsonify({"success": True, "trigger_time": now.isoformat()})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        conn.close()
+
+@app.route("/api/channel/override-timestamp", methods=["POST"])
+def override_timestamp():
+    """Ermoeglicht das manuelle Vor-/Zurueckstellen von Start, Wendepunkt oder Setting."""
+    data = request.get_json() or {}
+    box_id = str(data.get("box_id", "")).strip()
+    channel = int(data.get("channel", 0))
+    event_type = str(data.get("event_type", "")).strip().lower()  # 'start', 'turnaround', 'trigger'
+    raw_time = data.get("new_timestamp")
+
+    if not box_id or not event_type or not raw_time:
+        return jsonify({"success": False, "error": "Parameter unvollstaendig"}), 400
+
+    try:
+        if isinstance(raw_time, (int, float)):
+            new_dt = datetime.fromtimestamp(raw_time / 1000.0, tz=timezone.utc)
+        else:
+            new_dt = datetime.fromisoformat(str(raw_time).replace("Z", "+00:00"))
+    except Exception as e:
+        return jsonify({"success": False, "error": f"Ungueltiges Datumsformat: {e}"}), 400
+
+    job_id = f"ch{channel}"
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({"success": False, "error": "Keine DB-Verbindung"}), 500
+
+    try:
+        with conn.cursor() as cur:
+            if event_type == "start":
+                cur.execute("""
+                    INSERT INTO analyzer_state (device_id, channel, job_id, started_at, turnaround_sent, trigger_sent)
+                    VALUES (%s, %s, %s, %s, FALSE, FALSE)
+                    ON CONFLICT (device_id, channel, job_id) DO UPDATE SET
+                        started_at = EXCLUDED.started_at;
+                """, (box_id, channel, job_id, new_dt))
+            elif event_type == "turnaround":
+                cur.execute("""
+                    UPDATE analyzer_state
+                    SET turnaround_sent = TRUE, turnaround_time = %s
+                    WHERE device_id = %s AND channel = %s;
+                """, (new_dt, box_id, channel))
+            elif event_type in ("trigger", "setting"):
+                cur.execute("""
+                    UPDATE analyzer_state
+                    SET trigger_sent = TRUE, trigger_time = %s
+                    WHERE device_id = %s AND channel = %s;
+                """, (new_dt, box_id, channel))
+            else:
+                return jsonify({"success": False, "error": f"Unbekannter event_type '{event_type}'"}), 400
+
+            conn.commit()
+        return jsonify({"success": True, "updated_time": new_dt.isoformat()})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        conn.close()
+
+
+# ==========================================
+# ADMIN REST APIS
+# ==========================================
+
 @app.route("/api/config/save-box", methods=["POST"])
+@admin_required
 def save_box():
     data = request.get_json() or {}
-    yaml_key = data.get("yaml_key", "").strip()
-    dev_id = data.get("device_id", "").strip().lower()
+    yaml_key = str(data.get("yaml_key", "")).strip()
+    dev_id = str(data.get("device_id", "")).strip().lower()
 
     if not dev_id or not yaml_key or yaml_key.lower() == "server":
         return jsonify({"success": False, "error": "Ungültige Box-Parameter."}), 400
@@ -623,39 +805,16 @@ def save_box():
     try:
         raw_yaml = config_manager.load_all_raw()
         existing_box = raw_yaml.get(yaml_key, {})
-        existing_labels = existing_box.get("channel_labels", {})
-        
-        for k, v in data.items():
-            if k.startswith("chlabel_"):
-                ch_name = k.replace("chlabel_", "")
-                if str(v).strip():
-                    existing_labels[ch_name] = str(v).strip()
 
-        # 1. Probe Detection
-        probe_detection = existing_box.get("probe_detection", {})
-        if data.get("pd_delta_t_min"): probe_detection["delta_t_min"] = float(data["pd_delta_t_min"])
-        if data.get("pd_slope_min"): probe_detection["slope_min"] = float(data["pd_slope_min"])
-        if data.get("pd_rot_peak_min"): probe_detection["rot_peak_min"] = float(data["pd_rot_peak_min"])
+        def parse_int(val, default=None):
+            if val is None or str(val).strip() == "":
+                return default
+            try:
+                return int(val)
+            except ValueError:
+                return default
 
-        # 2. Turnaround Detection
-        turnaround_detection = existing_box.get("turnaround_detection", {})
-        if data.get("td_sg_window"): turnaround_detection["sg_window"] = int(data["td_sg_window"])
-        if data.get("td_cooling_slope_min"): turnaround_detection["cooling_slope_min"] = float(data["td_cooling_slope_min"])
-        if data.get("td_reheating_slope_min"): turnaround_detection["reheating_slope_min"] = float(data["td_reheating_slope_min"])
-        if data.get("td_min_cooling_delta"): turnaround_detection["min_cooling_delta"] = float(data["td_min_cooling_delta"])
-
-        # 3. Setting Detection
-        setting_detection = existing_box.get("setting_detection", {})
-        if data.get("sd_sg_window"): setting_detection["sg_window"] = int(data["sd_sg_window"])
-        if data.get("sd_poly_order"): setting_detection["poly_order"] = int(data["sd_poly_order"])
-        if data.get("sd_lookback_sec"): setting_detection["lookback_sec"] = int(data["sd_lookback_sec"])
-        if data.get("sd_min_samples"): setting_detection["min_samples"] = int(data["sd_min_samples"])
-        if data.get("sd_accel_min"): setting_detection["accel_min"] = float(data["sd_accel_min"])
-        if data.get("sd_slope_min"): setting_detection["slope_min"] = float(data["sd_slope_min"])
-        if data.get("sd_fallback_samples"): setting_detection["fallback_samples"] = int(data["sd_fallback_samples"])
-        if data.get("sd_fallback_step_min"): setting_detection["fallback_step_min"] = float(data["sd_fallback_step_min"])
-
-        def parse_bool(val, default=True):
+        def parse_bool(val, default=False):
             if val is None:
                 return default
             if isinstance(val, bool):
@@ -664,39 +823,52 @@ def save_box():
                 return val.lower() in ("true", "1", "yes", "on")
             return bool(val)
 
-        box_dict = {
-            "name": data.get("name", existing_box.get("name", yaml_key)),
-            "box_label": data.get("box_label") or existing_box.get("box_label", ""),
-            "channel_count": int(data.get("channel_count", existing_box.get("channel_count", 4))),
-            "device_id": dev_id,
-            "serial": int(data["serial"]) if str(data.get("serial", "")).isdigit() else existing_box.get("serial"),
-            "ntfy_channel": data.get("ntfy_channel", existing_box.get("ntfy_channel", "Concretum")),
-            "timezone": data.get("timezone", existing_box.get("timezone", "Europe/Zurich")),
-            "ip_lan": data.get("ip_lan") or existing_box.get("ip_lan"),
-            "mac_lan": data.get("mac_lan") or existing_box.get("mac_lan"),
-            "mac_wlan": data.get("mac_wlan") or existing_box.get("mac_wlan"),
-            "workstation": data.get("workstation") or existing_box.get("workstation"),
-            "auto_detection_enabled": parse_bool(data.get("auto_detection_enabled", existing_box.get("auto_detection_enabled", False))),
-            "turnaround_detection_enabled": parse_bool(data.get("turnaround_detection_enabled", existing_box.get("turnaround_detection_enabled", False))),
-            "channel_recording_enabled": parse_bool(data.get("channel_recording_enabled", existing_box.get("channel_recording_enabled", True))),
-            "ntfy_enabled": parse_bool(data.get("ntfy_enabled", existing_box.get("ntfy_enabled", False))),
-            "channel_labels": existing_labels
-        }
+        # 1. Channel Labels
+        channel_labels = dict(existing_box.get("channel_labels", {}))
+        for k, v in data.items():
+            if k.startswith("chlabel_"):
+                ch_id = k.replace("chlabel_", "").strip()
+                if v is not None and str(v).strip() != "":
+                    channel_labels[ch_id] = str(v).strip()
 
-        if probe_detection:
-            box_dict["probe_detection"] = probe_detection
-        if turnaround_detection:
-            box_dict["turnaround_detection"] = turnaround_detection
-        if setting_detection:
-            box_dict["setting_detection"] = setting_detection
+        # 2. Box-Dictionary zusammenstellen (Bereinigt um Sensorik)
+        serial_val = parse_int(data.get("serial"))
+        order_val = parse_int(data.get("order"), existing_box.get("order", 100))
+        
+        box_dict = {
+            "name": str(data.get("name") or existing_box.get("name", yaml_key)).strip(),
+            "box_label": str(data.get("box_label") if data.get("box_label") is not None else existing_box.get("box_label", "")).strip(),
+            "order": order_val,
+            "channel_count": parse_int(data.get("channel_count"), existing_box.get("channel_count", 4)),
+            "device_id": dev_id,
+            "serial": serial_val if serial_val is not None else existing_box.get("serial"),
+            "ntfy_channel": str(data.get("ntfy_channel") or existing_box.get("ntfy_channel", "Concretum")).strip(),
+            "timezone": str(data.get("timezone") or existing_box.get("timezone", "Europe/Zurich")).strip(),
+            "ip_lan": str(data.get("ip_lan") if data.get("ip_lan") is not None else existing_box.get("ip_lan", "")).strip() or None,
+            "mac_lan": str(data.get("mac_lan") if data.get("mac_lan") is not None else existing_box.get("mac_lan", "")).strip() or None,
+            "mac_wlan": str(data.get("mac_wlan") if data.get("mac_wlan") is not None else existing_box.get("mac_wlan", "")).strip() or None,
+            "workstation": str(data.get("workstation") if data.get("workstation") is not None else existing_box.get("workstation", "")).strip() or None,
+            "auto_detection_enabled": parse_bool(data.get("auto_detection_enabled"), existing_box.get("auto_detection_enabled", False)),
+            "turnaround_detection_enabled": parse_bool(data.get("turnaround_detection_enabled"), existing_box.get("turnaround_detection_enabled", False)),
+            "channel_recording_enabled": parse_bool(data.get("channel_recording_enabled"), existing_box.get("channel_recording_enabled", True)),
+            "ntfy_enabled": parse_bool(data.get("ntfy_enabled"), existing_box.get("ntfy_enabled", False)),
+            "auto_reset_after_30m": parse_bool(data.get("auto_reset_after_30m"), existing_box.get("auto_reset_after_30m", True)),
+            "channel_labels": channel_labels,
+            "channel_metadata": existing_box.get("channel_metadata", {}),
+            "probe_detection": existing_box.get("probe_detection", {}),
+            "turnaround_detection": existing_box.get("turnaround_detection", {}),
+            "setting_detection": existing_box.get("setting_detection", {})
+        }
 
         if config_manager.save_device_config(yaml_key, box_dict):
             return jsonify({"success": True})
-        return jsonify({"success": False, "error": "Speichern fehlgeschlagen"}), 500
+        return jsonify({"success": False, "error": "Fehler beim Schreiben der YAML-Datei."}), 500
     except Exception as e:
+        print(f"[Save Box Error] {e}", flush=True)
         return jsonify({"success": False, "error": str(e)}), 500
 
 @app.route("/api/config/delete-box", methods=["POST"])
+@admin_required
 def delete_box():
     data = request.get_json() or {}
     yaml_key = data.get("yaml_key", "").strip()

@@ -10,10 +10,25 @@ ebirec:
   mac_lan: 00:1b:0b:10:42:d1
   mac_wlan: e8:4e:06:9c:ce:89
   workstation: Pädi
+  auto_detection_enabled: false
+  turnaround_detection_enabled: false
+  channel_recording_enabled: false
+  ntfy_enabled: false
+  auto_reset_after_30m: true
+  channel_labels:
+    temp0: Kanal 1
+    temp1: Kanal 2
+    temp2: Kanal 3
+    temp3: Kanal 4
+    temp4: Kanal 5
+    temp5: Kanal 6
+    temp6: Kanal 7
+    temp7: Kanal 8
+  channel_metadata: {}
   probe_detection:
     delta_t_min: 0.8
     slope_min: 0.015
-    rot_peak_min: 0.035
+    rot_peak_min: 0.05
   turnaround_detection:
     sg_window: 31
     cooling_slope_min: -0.0003
@@ -24,20 +39,7 @@ ebirec:
     poly_order: 2
     lookback_sec: 120
     min_samples: 30
-    accel_min: 0.0000025
+    accel_min: 2.5e-06
     slope_min: 0.0005
     fallback_samples: 10
     fallback_step_min: 0.02
-  channel_labels:
-    temp0: Kanal 1
-    temp1: Kanal 2
-    temp2: Kanal 3
-    temp3: Kanal 4
-    temp4: Kanal 5
-    temp5: Kanal 6
-    temp6: Kanal 7
-    temp7: Kanal 8
-  auto_detection_enabled: false
-  turnaround_detection_enabled: false
-  channel_recording_enabled: false
-  ntfy_enabled: false

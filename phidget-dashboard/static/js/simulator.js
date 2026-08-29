@@ -1,36 +1,87 @@
 /**
- * @file: simulator.js
- * @version: 2.8.0
- * @date: 2026-08-28
+ * @file: static/js/simulator.js
+ * @version: 2.9.0
+ * @date: 2026-08-29
  * @description: Interaktive Steuerung und Plotly-Visualisierung mit synchroner Mikro-Skalierung, 
- *               beruhigter Beschleunigungskurve und sichtbarer Gatekeeper-Phasenschattierung.
+ *               vollstaendiger Sensorik-Parametrierung (Einstich, Wendepunkt, Setting),
+ *               Hamburger-Navigation und Toast-Meldungen (DEV-28).
  * @author: Patrick Stähli
  */
 
 let currentData = null;
 
 function getSelectedDeviceKey() {
-  const sel = document.getElementById("target_box") || document.getElementById("selBox");
+  const sel = document.getElementById("selBox") || document.getElementById("target_box");
   if (!sel) return "baustellenkoffer_1";
   const val = sel.value.trim();
   const match = val.match(/\(([^)]+)\)/);
   return match ? match[1] : val;
 }
 
+function toggleHamburgerMenu() {
+  const menu = document.getElementById('hamburger-menu');
+  if (menu) {
+    menu.classList.toggle('hidden');
+  }
+}
+
+document.addEventListener('click', (e) => {
+  const btnHam = document.getElementById('btn-hamburger');
+  const menuHam = document.getElementById('hamburger-menu');
+  if (btnHam && menuHam && !btnHam.contains(e.target) && !menuHam.contains(e.target)) {
+    menuHam.classList.add('hidden');
+  }
+});
+
+async function performAdminLogout() {
+  try {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    showToast('Admin-Sitzung beendet', 'success');
+    setTimeout(() => {
+      window.location.href = '/';
+    }, 400);
+  } catch (e) {
+    showToast('Fehler beim Abmelden', 'error');
+  }
+}
+
+function showToast(msg, type) {
+  const toast = document.getElementById('toast');
+  if (!toast) return;
+  toast.innerText = msg;
+  toast.className = `fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2.5 rounded-lg text-xs font-semibold shadow-xl border transition-opacity duration-200 z-50 font-mono ${
+    type === 'success' ? 'bg-emerald-900 border-emerald-700 text-emerald-200' : 'bg-rose-900 border-rose-700 text-rose-200'
+  } opacity-100`;
+  setTimeout(() => { toast.classList.add('opacity-0'); }, 2500);
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   const versionEl = document.getElementById("jsVersionDisplay");
   if (versionEl) {
-    versionEl.innerText = "JS v2.8.0";
+    versionEl.innerText = "JS v2.9.0";
   }
 
-  const selBox = document.getElementById("target_box") || document.getElementById("selBox");
+  const selBox = document.getElementById("selBox") || document.getElementById("target_box");
   if (selBox) {
-    selBox.addEventListener("change", (e) => loadDeviceParams(e.target.value));
+    const savedBox = localStorage.getItem('concretum_sim_active_box');
+    if (savedBox && Array.from(selBox.options).some(opt => opt.value === savedBox)) {
+      selBox.value = savedBox;
+    }
+
+    selBox.addEventListener("change", (e) => {
+      localStorage.setItem('concretum_sim_active_box', e.target.value);
+      loadDeviceParams(e.target.value);
+    });
+
     if (selBox.value) {
       loadDeviceParams(selBox.value);
     }
   }
 });
+
+async function loadBoxProfileParams(devKey) {
+  loadDeviceParams(devKey);
+}
 
 async function loadDeviceParams(devKey) {
   if (!devKey) return;
@@ -38,16 +89,31 @@ async function loadDeviceParams(devKey) {
     const res = await fetch(`/api/simulator/get-params/${devKey}`);
     const data = await res.json();
     if (data.success) {
+      if (data.probe_detection) {
+        const elDt = document.getElementById("pd_delta_t_min");
+        const elSl = document.getElementById("pd_slope_min");
+        const elRp = document.getElementById("pd_rot_peak_min");
+        if (elDt && data.probe_detection.delta_t_min != null) elDt.value = data.probe_detection.delta_t_min;
+        if (elSl && data.probe_detection.slope_min != null) elSl.value = data.probe_detection.slope_min;
+        if (elRp && data.probe_detection.rot_peak_min != null) elRp.value = data.probe_detection.rot_peak_min;
+      }
       if (data.turnaround_detection) {
-        document.getElementById("td_sg_window").value = data.turnaround_detection.sg_window || 31;
-        document.getElementById("td_min_cooling_delta").value = data.turnaround_detection.min_cooling_delta || 0.20;
-        document.getElementById("td_cooling_slope_min").value = data.turnaround_detection.cooling_slope_min || -0.0003;
-        document.getElementById("td_reheating_slope_min").value = data.turnaround_detection.reheating_slope_min || 0.0003;
+        const elWin = document.getElementById("td_sg_window");
+        const elDel = document.getElementById("td_min_cooling_delta");
+        const elCool = document.getElementById("td_cooling_slope_min");
+        const elHeat = document.getElementById("td_reheating_slope_min");
+        if (elWin && data.turnaround_detection.sg_window != null) elWin.value = data.turnaround_detection.sg_window;
+        if (elDel && data.turnaround_detection.min_cooling_delta != null) elDel.value = data.turnaround_detection.min_cooling_delta;
+        if (elCool && data.turnaround_detection.cooling_slope_min != null) elCool.value = data.turnaround_detection.cooling_slope_min;
+        if (elHeat && data.turnaround_detection.reheating_slope_min != null) elHeat.value = data.turnaround_detection.reheating_slope_min;
       }
       if (data.setting_detection) {
-        document.getElementById("sd_lookback_sec").value = data.setting_detection.lookback_sec || 120;
-        document.getElementById("sd_accel_min").value = data.setting_detection.accel_min || 0.000010;
-        document.getElementById("sd_slope_min").value = data.setting_detection.slope_min || 0.0002;
+        const elLb = document.getElementById("sd_lookback_sec");
+        const elAcc = document.getElementById("sd_accel_min");
+        const elSlp = document.getElementById("sd_slope_min");
+        if (elLb && data.setting_detection.lookback_sec != null) elLb.value = data.setting_detection.lookback_sec;
+        if (elAcc && data.setting_detection.accel_min != null) elAcc.value = data.setting_detection.accel_min;
+        if (elSlp && data.setting_detection.slope_min != null) elSlp.value = data.setting_detection.slope_min;
       }
     }
   } catch (err) {
@@ -76,15 +142,16 @@ async function runSimulation() {
     const result = await res.json();
 
     if (!result.success) {
-      alert(result.error || "Analysefehler");
+      showToast(result.error || "Analysefehler", "error");
       return;
     }
 
     currentData = result.data;
     renderPlot(result.data);
     updateMetrics(result.data.metrics || result.data);
+    showToast("Simulation erfolgreich berechnet!", "success");
   } catch (err) {
-    alert("Netzwerkfehler bei der Analyse: " + err);
+    showToast("Netzwerkfehler bei der Analyse", "error");
   }
 }
 
@@ -154,7 +221,7 @@ function renderPlot(d) {
     });
   }
 
-  // Wendepunkt-Marker (t_min) auf der Temperaturkurve
+  // Wendepunkt-Marker (t_min)
   if (d.turnaround_detected && d.turnaround_time && d.t_min_temp !== null && d.t_min_temp !== undefined) {
     traces.push({
       x: [d.turnaround_time],
@@ -165,7 +232,7 @@ function renderPlot(d) {
     });
   }
 
-  // Lookback-Fit-Intervall & Alarmpunkt am Triggerpunkt
+  // Lookback-Fit-Intervall & Alarmpunkt
   if (d.trigger_fit_segment && d.trigger_fit_segment.times) {
     traces.push({
       x: d.trigger_fit_segment.times,
@@ -184,7 +251,7 @@ function renderPlot(d) {
     });
   }
 
-  // Beschleunigungskurve: Skaliert auf µ°C/s² (Faktor 1e6)
+  // Beschleunigungskurve: Skaliert auf µ°C/s²
   if (d.accel_series && d.accel_series.length > 0) {
     const accelMicro = d.accel_series.map(v => v * 1000000.0);
     traces.push({
@@ -194,11 +261,11 @@ function renderPlot(d) {
       mode: 'lines',
       name: 'Rotationsbeschleunigung (d²T/dt²)',
       line: { color: '#f59e0b', width: 1.5, dash: 'dot' },
-      visible: true // Vollstaendig sichtbar durch kaskadierte Glättung
+      visible: true
     });
   }
 
-  // Schwellenwert-Linie: Fest an Sekundaerachse (y2) gebunden mit Mikro-Skalierung
+  // Schwellenwert-Linie
   const rawAccelLimit = parseFloat(document.getElementById("sd_accel_min").value) || 0.000010;
   const accelLimitMicro = rawAccelLimit * 1000000.0;
   traces.push({
@@ -210,7 +277,6 @@ function renderPlot(d) {
     line: { color: '#ef4444', dash: 'dot', width: 1.5 }
   });
 
-  // Layout Shapes: Gatekeeper-Schattierung (Sperrphase bis zum Scharfschalten / t_min)
   const shapes = [];
   const gatekeeperEnd = d.turnaround_armed_time || d.turnaround_time;
   if (d.turnaround_detected && gatekeeperEnd) {
@@ -260,7 +326,7 @@ function renderPlot(d) {
       zeroline: true,
       zerolinecolor: '#475569',
       zerolinewidth: 1.5,
-      range: [-15, 30] // Fester Bereich erzwingt, dass die Schwellenlinie korrekt auf der rechten Skala liegt
+      range: [-15, 30]
     },
     legend: { orientation: 'h', y: -0.15 }
   };
@@ -273,12 +339,21 @@ async function saveParamsToYaml(e) {
 
   const devKey = getSelectedDeviceKey();
   if (!devKey) {
-    alert("❌ Bitte wählen Sie zuerst einen Koffer aus!");
+    showToast('Bitte wählen Sie zuerst einen Koffer aus!', 'error');
     return;
   }
 
+  const elDt = document.getElementById("pd_delta_t_min");
+  const elSl = document.getElementById("pd_slope_min");
+  const elRp = document.getElementById("pd_rot_peak_min");
+
   const payload = {
     device_key: devKey,
+    probe_detection: {
+      delta_t_min: elDt ? parseFloat(elDt.value) || 0.80 : 0.80,
+      slope_min: elSl ? parseFloat(elSl.value) || 0.015 : 0.015,
+      rot_peak_min: elRp ? parseFloat(elRp.value) || 0.035 : 0.035
+    },
     turnaround_detection: {
       sg_window: parseInt(document.getElementById("td_sg_window").value) || 31,
       min_cooling_delta: parseFloat(document.getElementById("td_min_cooling_delta").value) || 0.20,
@@ -305,18 +380,23 @@ async function saveParamsToYaml(e) {
     });
     const data = await res.json();
     if (data.success) {
-      alert(`✅ Parameter erfolgreich in ${devKey}.yaml gespeichert!`);
+      showToast(`Parameter in ${devKey}.yaml gespeichert!`, "success");
     } else {
-      alert("❌ Fehler beim Speichern: " + (data.error || "Unbekannter Fehler"));
+      if (data.auth_required) {
+        showToast("Admin-Rechte erforderlich.", "error");
+        setTimeout(() => { window.location.href = '/'; }, 1000);
+      } else {
+        showToast(data.error || "Fehler beim Speichern", "error");
+      }
     }
   } catch (err) {
-    alert("Netzwerkfehler beim Speichern: " + err);
+    showToast("Netzwerkfehler beim Speichern", "error");
   }
 }
 
 async function generateNightReport() {
   if (!currentData) {
-    alert("Bitte führen Sie zuerst eine Analyse durch!");
+    showToast("Bitte führen Sie zuerst eine Analyse durch!", "error");
     return;
   }
   const devKey = getSelectedDeviceKey();
@@ -338,7 +418,8 @@ async function generateNightReport() {
     a.download = `Report_${devKey}.png`;
     a.click();
     window.URL.revokeObjectURL(url);
+    showToast("Report erfolgreich heruntergeladen!", "success");
   } catch (err) {
-    alert("Fehler beim Exportieren des Plots: " + err);
+    showToast("Fehler beim Exportieren des Plots", "error");
   }
 }
